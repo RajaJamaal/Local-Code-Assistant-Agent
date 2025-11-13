@@ -22,64 +22,60 @@ def read_file(file_path: str) -> str:
 
 @tool
 def write_file(file_path: str, content: str) -> str:
-    """Writes content to a file with security validation and directory creation."""
+    """Writes content to a file with security validation."""
     if not SecurityValidator.validate_file_path(file_path):
         return "Error: Invalid file path or security violation detected."
     
     try:
-        safe_path = SecurityValidator.sanitize_filename(file_path)
-        os.makedirs(os.path.dirname(safe_path), exist_ok=True)
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
         
-        with open(safe_path, 'w', encoding='utf-8') as f:
+        with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        return f"Successfully wrote to {safe_path}"
+        return f"Successfully wrote to '{file_path}'"
     except Exception as e:
         return f"Error writing file: {str(e)}"
 
 @tool
-def list_directory(directory_path: str = ".") -> List[str]:
-    """Lists files and directories in the specified path."""
+def list_directory(directory_path: str = ".") -> str:
+    """Lists contents of a directory with security validation."""
     if not SecurityValidator.validate_file_path(directory_path):
-        return ["Error: Invalid directory path."]
+        return "Error: Invalid directory path or security violation detected."
     
     try:
         items = os.listdir(directory_path)
-        result = []
-        for item in items:
-            full_path = os.path.join(directory_path, item)
-            if os.path.isdir(full_path):
-                result.append(f"📁 {item}/")
-            else:
-                result.append(f"📄 {item}")
-        return result
+        return f"Directory '{directory_path}':\n" + "\n".join(items)
+    except FileNotFoundError:
+        return f"Error: Directory '{directory_path}' not found."
+    except PermissionError:
+        return f"Error: Permission denied accessing '{directory_path}'."
     except Exception as e:
-        return [f"Error listing directory: {str(e)}"]
+        return f"Error listing directory: {str(e)}"
 
 @tool
-def execute_command(command: str) -> str:
+def execute_command(command: str, timeout: int = 30) -> str:
     """Executes a shell command with security validation and timeout."""
-    if not SecurityValidator.validate_command(command):
-        return "Error: Command rejected due to security policy."
+    # Basic command validation
+    blocked_commands = ['rm -rf', 'format', 'dd', 'mkfs', 'shutdown', 'reboot']
+    if any(blocked in command.lower() for blocked in blocked_commands):
+        return "Error: Command blocked for security reasons."
     
     try:
         result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=os.getcwd()
+            command, 
+            shell=True, 
+            capture_output=True, 
+            text=True, 
+            timeout=timeout,
+            cwd=os.getcwd()  # Restrict to current directory
         )
-        output = f"Exit code: {result.returncode}\n"
-        if result.stdout:
-            output += f"STDOUT:\n{result.stdout}\n"
-        if result.stderr:
-            output += f"STDERR:\n{result.stderr}\n"
-        return output
+        if result.returncode == 0:
+            return f"Command executed successfully:\n{result.stdout}"
+        else:
+            return f"Command failed (exit code {result.returncode}):\n{result.stderr}"
     except subprocess.TimeoutExpired:
-        return "Error: Command timed out after 30 seconds."
+        return f"Error: Command timed out after {timeout} seconds."
     except Exception as e:
         return f"Error executing command: {str(e)}"
 
-# Export all tools
 tools = [read_file, write_file, list_directory, execute_command]

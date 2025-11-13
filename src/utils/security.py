@@ -10,43 +10,46 @@ class SecurityValidator:
             if not path or not isinstance(path, str):
                 return False
                 
+            # Resolve absolute path
             absolute_path = os.path.abspath(path)
             current_dir = os.path.abspath(os.getcwd())
             
-            # Prevent path traversal
+            # Prevent path traversal outside current directory
             if not absolute_path.startswith(current_dir):
                 return False
             
-            # Block sensitive directories
+            # Block sensitive directories and patterns
             blocked_patterns = [
                 r'/\.git/', r'/\.vscode/', r'/node_modules/',
-                r'/etc/', r'/boot/', r'/sys/', r'/proc/', r'/dev/'
+                r'/etc/', r'/boot/', r'/sys/', r'/proc/', r'/dev/',
+                r'\.\./', r'~/', r'/root/', r'/var/log/'
             ]
             
-            path_str = str(Path(absolute_path))
-            return not any(re.search(pattern, path_str) for pattern in blocked_patterns)
+            for pattern in blocked_patterns:
+                if re.search(pattern, absolute_path):
+                    return False
+            
+            return True
             
         except Exception:
             return False
 
     @staticmethod
-    def validate_command(cmd: str) -> bool:
-        """Validate shell commands for security."""
-        if not cmd or not isinstance(cmd, str):
-            return False
-            
-        blocked_patterns = [
-            r'rm\s+-rf', r'mkfs', r'dd\s+if=',
-            r'chmod\s+777', r'chown\s+', r'passwd',
-            r'ssh-keygen', r'format\s+', r'fdisk',
-            r'>\s+/dev/', r'curl\s+.*\|\s*sh',
-            r'wget\s+.*\|\s*sh'
-        ]
-        return not any(re.search(pattern, cmd, re.IGNORECASE) for pattern in blocked_patterns)
-
-    @staticmethod
     def sanitize_filename(filename: str) -> str:
         """Sanitize filename to prevent path injection."""
-        if not filename:
-            return "untitled"
-        return re.sub(r'[^\w\-_. ]', '_', filename)
+        # Remove path components and keep only filename
+        basename = os.path.basename(filename)
+        # Replace dangerous characters
+        sanitized = re.sub(r'[^\w\-_. ]', '_', basename)
+        return sanitized[:255]  # Limit length
+
+    @staticmethod
+    def validate_command(command: str) -> bool:
+        """Validate shell command for security."""
+        blocked_commands = [
+            'rm -rf', 'format', 'dd', 'mkfs', 'shutdown', 'reboot',
+            'passwd', 'chmod 777', 'wget', 'curl | bash'
+        ]
+        
+        command_lower = command.lower()
+        return not any(blocked in command_lower for blocked in blocked_commands)
