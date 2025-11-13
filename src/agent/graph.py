@@ -1,4 +1,4 @@
-from langchain_community.chat_models import ChatOllama
+from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, END
 from src.agent.state import AgentState, ToolExecutor
 from src.tools.file_tools import tools
@@ -15,7 +15,7 @@ class CodeAssistantAgent:
             model=self.model_name,
             temperature=0.1,
             num_ctx=4096
-        ).bind_tools(tools)
+        )
 
     def should_continue(self, state: AgentState) -> str:
         """Determine if the agent should continue using tools or end."""

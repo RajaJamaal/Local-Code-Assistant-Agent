@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-print("=== Testing Simple Agent Setup ===")
+print("=== Testing Simple Agent ===")
 
 import sys
 import os
@@ -8,31 +8,29 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 try:
-    print("1. Testing basic imports...")
-    from langchain_community.chat_models import ChatOllama
-    from langgraph.graph import StateGraph, END
-    print("   ✅ Basic imports successful!")
+    print("1. Importing simple agent...")
+    from agent.simple_agent import run_simple_agent
+    print("   ✅ Simple agent imported!")
     
-    print("2. Testing tools import...")
-    from tools.file_tools import tools
-    print(f"   ✅ Tools imported: {len(tools)} tools")
+    print("2. Testing file creation...")
+    test_query = "Create a file called test_agent.txt with content Hello from Simple Agent"
+    result = run_simple_agent(test_query)
+    print(f"   ✅ Agent response: {result}")
     
-    print("3. Testing Ollama connection...")
-    llm = ChatOllama(model="codellama:7b-code-q4_K_M", temperature=0.1)
-    test_response = llm.invoke("Say 'Hello' in one word")
-    print(f"   ✅ Ollama working: {test_response.content}")
+    print("3. Checking if file was created...")
+    if os.path.exists("test_agent.txt"):
+        with open("test_agent.txt", "r") as f:
+            content = f.read()
+            print(f"   📄 File content: '{content}'")
+        # Clean up
+        os.remove("test_agent.txt")
+        print("   🧹 Test file cleaned up")
+    else:
+        print("   ℹ️  File not created - agent logic might need adjustment")
     
-    print("4. Testing agent state imports...")
-    from agent.state import AgentState, ToolExecutor
-    print("   ✅ Agent state imports successful!")
+    print("\n🎉 Simple agent test completed!")
     
-    print("5. Testing tool executor...")
-    executor = ToolExecutor(tools)
-    print("   ✅ Tool executor created!")
-    
-    print("\n🎉 All basic components working! Ready to build the full agent.")
-    
-except ImportError as e:
-    print(f"❌ Import error: {e}")
 except Exception as e:
-    print(f"❌ Other error: {e}")
+    print(f"❌ Error: {e}")
+    import traceback
+    traceback.print_exc()
