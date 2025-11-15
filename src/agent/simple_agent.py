@@ -3,7 +3,7 @@ Simple agent that uses direct tool execution without LLM delays
 """
 import os
 import re
-from src.tools.file_tools import tools
+from ..tools.file_tools import tools
 
 class SimpleCodeAssistant:
     def __init__(self):

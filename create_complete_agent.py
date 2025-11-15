@@ -1,4 +1,8 @@
-"""
+#!/usr/bin/env python3
+import os
+
+# Create the complete improved agent
+content = '''"""
 Improved agent with better command recognition
 """
 import os
@@ -8,7 +12,7 @@ import sys
 # Add the project root to path so imports work
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ..tools.file_tools import tools
+from tools.file_tools import tools
 
 class ImprovedCodeAssistant:
     def __init__(self):
@@ -32,7 +36,7 @@ class ImprovedCodeAssistant:
             else:
                 return "Please specify which file to read."
         else:
-            return "I can help with: creating files, listing directories, reading files. Try: 'Create a file called example.py with content print(\\'hello\\')'"
+            return "I can help with: creating files, listing directories, reading files. Try: 'Create a file called example.py with content print(\\\\'hello\\\\')'"
 
     def _handle_file_creation(self, query: str) -> str:
         """Handle file creation with improved parsing."""
@@ -41,32 +45,20 @@ class ImprovedCodeAssistant:
             filename = "output.txt"
             content = "File created by AI assistant"
             
-            # Extract filename - ROBUST pattern
-            query_lower = query.lower()
-            
-            # Pattern 1: "create file [filename] with content"
-            if "create file" in query_lower:
-                parts = query_lower.split("create file")[1].strip()
-                if "with content" in parts:
-                    filename = parts.split("with content")[0].strip()
-                elif "with" in parts:
+            # Extract filename - improved pattern
+            if "called" in query.lower():
+                parts = query.lower().split("called")[1].strip()
+                filename = parts.split()[0].strip(' .",')
+            elif "named" in query.lower():
+                parts = query.lower().split("named")[1].strip()
+                filename = parts.split()[0].strip(' .",')
+            elif "create" in query.lower() and "file" in query.lower():
+                # Try to extract filename after "file"
+                parts = query.lower().split("file")[1].strip()
+                if "with" in parts:
                     filename = parts.split("with")[0].strip()
                 else:
-                    filename = parts
-            # Pattern 2: "create a file called [filename]"
-            elif "called" in query_lower:
-                parts = query_lower.split("called")[1].strip()
-                if "with content" in parts:
-                    filename = parts.split("with content")[0].strip()
-                else:
-                    filename = parts.split()[0]
-            else:
-                # Fallback: try to find the first word after "file"
-                if "file" in query_lower:
-                    parts = query_lower.split("file")[1].strip()
-                    filename = parts.split()[0] if parts.split() else "output.txt"
-                else:
-                    filename = "output.txt"
+                    filename = parts.split()[0].strip(' .",')
             
             # Extract content  
             if "with content" in query.lower():
@@ -77,7 +69,7 @@ class ImprovedCodeAssistant:
                 content = content_part.strip('"')
             
             # Clean filename but preserve extensions
-            filename = re.sub(r'[^\w\-_.]', '_', filename)
+            filename = re.sub(r'[^\\w\\-_.]', '_', filename)
             
             print(f"📝 Creating file: {filename} with content: {content}")
             
@@ -94,14 +86,10 @@ class ImprovedCodeAssistant:
     
     def _extract_filename(self, query: str) -> str:
         """Extract filename from query."""
-        query_lower = query.lower()
-        if "read file" in query_lower:
-            # Get everything after "read file"
-            filename = query_lower.split("read file")[1].strip()
-            # Remove any trailing punctuation or common words
-            if " " in filename:
-                filename = filename.split()[0]
-            return filename.strip('",.')
+        words = query.lower().split()
+        for i, word in enumerate(words):
+            if word in ['file', 'read'] and i + 1 < len(words):
+                return words[i + 1].strip('",.')
         return ""
 
 def run_improved_agent(query: str) -> str:
@@ -119,7 +107,15 @@ if __name__ == "__main__":
     ]
     
     for query in test_queries:
-        print(f"\n🎯 Testing: {query}")
+        print(f"\\n🎯 Testing: {query}")
         result = run_improved_agent(query)
         print(f"📝 Result: {result}")
         print("-" * 50)
+'''
+
+# Write the complete file
+os.makedirs('src/agent', exist_ok=True)
+with open('src/agent/simple_agent_improved.py', 'w') as f:
+    f.write(content)
+
+print("✅ Created complete src/agent/simple_agent_improved.py")

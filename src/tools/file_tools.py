@@ -2,7 +2,7 @@ import os
 import subprocess
 from typing import List
 from langchain_core.tools import tool
-from src.utils.security import SecurityValidator
+from ..utils.security import SecurityValidator
 
 @tool
 def read_file(file_path: str) -> str:
