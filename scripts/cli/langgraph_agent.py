@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 QueryRunner = Callable[[str], str]
+USE_LANGGRAPH_MOCK = os.getenv("LANGGRAPH_AGENT_MOCK", "0") == "1"
 
 
 def format_response(success: bool, message: str, json_output: bool) -> None:
@@ -64,6 +65,11 @@ def create_runner(backend: str, model_name: str) -> QueryRunner:
     """Return a callable that executes queries using the requested backend."""
     if backend == "simple":
         return create_simple_runner()
+
+    if USE_LANGGRAPH_MOCK:
+        def mock_runner(query: str) -> str:
+            return f"[Mock LangGraph response] {query}"
+        return mock_runner
 
     from src.agent.manager import AgentManager  # Local import to avoid heavy deps during --help
 

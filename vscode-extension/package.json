@@ -60,6 +60,10 @@
       }
     }
   },
+  "repository": {
+    "type": "git",
+    "url": "https://example.com/your-private-repo.git"
+  },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",

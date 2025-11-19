@@ -48,11 +48,14 @@ The `vscode-extension/` folder contains a ready-to-run extension that shells out
 cd vscode-extension
 npm install
 npm run compile
+# optional: create .vsix for local install
+npm install -g @vscode/vsce
+vsce package
 ```
 
 Open the folder in VSCode and hit `F5` to start an Extension Development Host, then run **Local Code Assistant: Run Query** from the command palette. The extension exposes settings for the Python path, CLI location, working directory, and Ollama model so it can adapt to different setups.
 
-See `docs/vscode.md` for a full walkthrough of the available commands and configuration options.
+See `docs/vscode.md` for a full walkthrough of the available commands, multi-turn response history, and configuration options.
 
 ## Diagnostics & Manual Tests
 
@@ -69,6 +72,27 @@ python tests/manual/test_cli_json.py
 # Regression test for simple backend (text responses)
 python tests/manual/test_cli_simple_suite.py
 
+# Mocked LangGraph backend (exercises CLI JSON mode without Ollama)
+LANGGRAPH_AGENT_MOCK=1 python tests/manual/test_cli_langgraph_mock.py
+
 # Confirm filesystem helpers are healthy
 python tests/manual/test_direct_write.py
 ```
+
+## Automation Shortcuts
+
+Common tasks are available via `make`:
+
+```bash
+make setup           # create .venv and install Python deps
+make test-cli        # run simple-backend regression test
+make test-json       # run CLI JSON-mode test
+make test-llm        # run LangGraph mock-path test
+make test-all        # run both CLI tests
+make build-extension # install npm deps and build the VSCode extension
+make package-extension # build and package VSCode extension into a .vsix
+```
+
+## Continuous Integration
+
+GitHub Actions (`.github/workflows/ci.yml`) automatically install dependencies and run the CLI regression tests on every push/PR targeting `main`/`master`. Extend this workflow as needed (e.g., to build the VSCode extension or run additional diagnostics) once the remote infrastructure can reach your Ollama service.

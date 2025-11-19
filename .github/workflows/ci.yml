@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up virtualenv
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -r requirements.txt
+      - name: Run CLI regression tests
+        run: |
+          . .venv/bin/activate
+          python tests/manual/test_cli_simple_suite.py
+          python tests/manual/test_cli_json.py
+          LANGGRAPH_AGENT_MOCK=1 python tests/manual/test_cli_langgraph_mock.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: vscode-extension/package-lock.json
+      - name: Build VSCode extension
+        working-directory: vscode-extension
+        run: |
+          npm ci
+          npm run compile
