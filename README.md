@@ -52,6 +52,8 @@ npm run compile
 
 Open the folder in VSCode and hit `F5` to start an Extension Development Host, then run **Local Code Assistant: Run Query** from the command palette. The extension exposes settings for the Python path, CLI location, working directory, and Ollama model so it can adapt to different setups.
 
+See `docs/vscode.md` for a full walkthrough of the available commands and configuration options.
+
 ## Diagnostics & Manual Tests
 
 ```bash
@@ -63,6 +65,9 @@ python tests/manual/test_agent.py
 
 # Validate CLI JSON mode (simple backend, no LLM required)
 python tests/manual/test_cli_json.py
+
+# Regression test for simple backend (text responses)
+python tests/manual/test_cli_simple_suite.py
 
 # Confirm filesystem helpers are healthy
 python tests/manual/test_direct_write.py

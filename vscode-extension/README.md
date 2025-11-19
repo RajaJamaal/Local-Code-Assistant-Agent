@@ -21,3 +21,8 @@ Use the “Local Code Assistant: Run Query” command from the palette to ask th
 - `localCodeAssistant.backend` – Choose between `langgraph` (LLM) or `simple` (heuristic) backend.
 - `localCodeAssistant.model` – Ollama model passed to the CLI.
 - `localCodeAssistant.workingDirectory` – Override working directory (defaults to first workspace folder).
+
+### Commands
+
+- **Local Code Assistant: Run Query** – prompts for a free-form question and streams the response.
+- **Local Code Assistant: Use Selection** – sends the current editor selection (optionally with extra instructions) to the CLI, which is handy for quick reviews or file-specific tasks.

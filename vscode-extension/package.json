@@ -11,7 +11,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:localCodeAssistant.runQuery"
+    "onCommand:localCodeAssistant.runQuery",
+    "onCommand:localCodeAssistant.runSelection"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -19,6 +20,11 @@
       {
         "command": "localCodeAssistant.runQuery",
         "title": "Local Code Assistant: Run Query",
+        "category": "Local Code Assistant"
+      },
+      {
+        "command": "localCodeAssistant.runSelection",
+        "title": "Local Code Assistant: Use Selection",
         "category": "Local Code Assistant"
       }
     ],
