@@ -1,0 +1,67 @@
+{
+  "name": "local-code-assistant",
+  "displayName": "Local Code Assistant",
+  "description": "Use the local LangGraph coding agent (powered by Ollama) directly inside VSCode.",
+  "version": "0.0.1",
+  "publisher": "local-dev",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:localCodeAssistant.runQuery"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "localCodeAssistant.runQuery",
+        "title": "Local Code Assistant: Run Query",
+        "category": "Local Code Assistant"
+      }
+    ],
+    "configuration": {
+      "title": "Local Code Assistant",
+      "properties": {
+        "localCodeAssistant.pythonPath": {
+          "type": "string",
+          "default": "${env:LOCAL_CODE_ASSISTANT_PYTHON|python3}",
+          "description": "Python executable used to launch scripts/cli/langgraph_agent.py."
+        },
+        "localCodeAssistant.cliPath": {
+          "type": "string",
+          "default": "scripts/cli/langgraph_agent.py",
+          "description": "Relative or absolute path to the langgraph_agent.py CLI."
+        },
+        "localCodeAssistant.backend": {
+          "type": "string",
+          "enum": ["langgraph", "simple"],
+          "default": "langgraph",
+          "description": "Backend passed to the CLI (--backend)."
+        },
+        "localCodeAssistant.model": {
+          "type": "string",
+          "default": "codellama:7b-code-q4_K_M",
+          "description": "Ollama model name passed to the CLI."
+        },
+        "localCodeAssistant.workingDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Override working directory when invoking the CLI (defaults to the first workspace)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
