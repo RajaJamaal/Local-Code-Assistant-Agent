@@ -1,0 +1,3 @@
+2025-11-19 00:10:41,059 - src.agent.manager - INFO - Agent initialized with model: codellama:7b-code-q4_K_M
+2025-11-19 00:17:12,381 - src.agent.manager - INFO - Agent initialized with model: codellama:7b-code-q4_K_M
+2025-11-19 00:17:12,385 - src.agent.manager - INFO - Processed query: Create a file called langgraph_test.txt with conte...
