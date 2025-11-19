@@ -12,7 +12,8 @@
   ],
   "activationEvents": [
     "onCommand:localCodeAssistant.runQuery",
-    "onCommand:localCodeAssistant.runSelection"
+    "onCommand:localCodeAssistant.runSelection",
+    "onView:localCodeAssistant.history"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -26,8 +27,36 @@
         "command": "localCodeAssistant.runSelection",
         "title": "Local Code Assistant: Use Selection",
         "category": "Local Code Assistant"
+      },
+      {
+        "command": "localCodeAssistant.openPanel",
+        "title": "Local Code Assistant: Open History Panel",
+        "category": "Local Code Assistant"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "localCodeAssistant",
+          "title": "Local Assistant",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "localCodeAssistant.history",
+        "contents": "The response panel opens automatically when you run a command.\nClick **Open History Panel** to reopen it.\n[Open History Panel](command:localCodeAssistant.openPanel)"
+      }
+    ],
+    "views": {
+      "localCodeAssistant": [
+        {
+          "id": "localCodeAssistant.history",
+          "name": "Responses"
+        }
+      ]
+    },
     "configuration": {
       "title": "Local Code Assistant",
       "properties": {

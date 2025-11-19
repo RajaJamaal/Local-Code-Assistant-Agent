@@ -39,9 +39,8 @@ const vscode = __importStar(require("vscode"));
 const cp = __importStar(require("child_process"));
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
-let responsePanel;
-let panelMessageSubscription;
 const responseHistory = [];
+let chatViewProvider;
 function getConfig() {
     const config = vscode.workspace.getConfiguration('localCodeAssistant');
     const pythonDefault = process.platform === 'win32' ? 'python' : 'python3';
@@ -120,6 +119,8 @@ async function runQuery(query, output) {
 }
 function activate(context) {
     const outputChannel = vscode.window.createOutputChannel('Local Code Assistant');
+    chatViewProvider = new ChatViewProvider(context.extensionUri);
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider('localCodeAssistant.history', chatViewProvider));
     const runQueryCommand = vscode.commands.registerCommand('localCodeAssistant.runQuery', async () => {
         const query = await vscode.window.showInputBox({
             prompt: 'Ask the local coding assistant',
@@ -138,7 +139,7 @@ function activate(context) {
             if (!result) {
                 return;
             }
-            showResponsePanel(result);
+            chatViewProvider === null || chatViewProvider === void 0 ? void 0 : chatViewProvider.addResponse(result);
             outputChannel.show(true);
         }
         catch (error) {
@@ -170,66 +171,144 @@ function activate(context) {
             if (!result) {
                 return;
             }
-            showResponsePanel(result);
+            chatViewProvider === null || chatViewProvider === void 0 ? void 0 : chatViewProvider.addResponse(result);
             outputChannel.show(true);
         }
         catch (error) {
             vscode.window.showErrorMessage(String(error));
         }
     });
-    context.subscriptions.push(runQueryCommand, runSelectionCommand, outputChannel);
+    const openPanelCommand = vscode.commands.registerCommand('localCodeAssistant.openPanel', async () => {
+        if (!chatViewProvider) {
+            vscode.window.showInformationMessage('Sidebar not ready yet.');
+            return;
+        }
+        chatViewProvider.reveal();
+    });
+    context.subscriptions.push(runQueryCommand, runSelectionCommand, openPanelCommand, outputChannel);
 }
 function deactivate() {
     // Nothing to cleanup.
 }
-function showResponsePanel(result) {
-    result.filePath = extractFilePath(result.response);
-    responseHistory.push(result);
-    if (responseHistory.length > 10) {
-        responseHistory.shift();
+class ChatViewProvider {
+    constructor(extensionUri) {
+        this.extensionUri = extensionUri;
     }
-    if (!responsePanel) {
-        responsePanel = vscode.window.createWebviewPanel('localCodeAssistantResponse', 'Local Code Assistant', vscode.ViewColumn.Beside, { enableScripts: true });
-        responsePanel.onDidDispose(() => {
-            responsePanel = undefined;
-            panelMessageSubscription === null || panelMessageSubscription === void 0 ? void 0 : panelMessageSubscription.dispose();
-            panelMessageSubscription = undefined;
+    resolveWebviewView(webviewView, _context, _token) {
+        this.view = webviewView;
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this.extensionUri]
+        };
+        webviewView.webview.html = this.getHtml(webviewView.webview);
+        webviewView.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'copy') {
+                const entry = responseHistory[message.index];
+                if (!entry) {
+                    return;
+                }
+                await vscode.env.clipboard.writeText(entry.response);
+                vscode.window.showInformationMessage('Response copied to clipboard.');
+            }
+            if (message.command === 'openFile') {
+                const entry = responseHistory[message.index];
+                if (!(entry === null || entry === void 0 ? void 0 : entry.filePath)) {
+                    vscode.window.showErrorMessage('No file path found for this response.');
+                    return;
+                }
+                const resolvedPath = path.isAbsolute(entry.filePath)
+                    ? entry.filePath
+                    : path.join(entry.cwd, entry.filePath);
+                if (!fs.existsSync(resolvedPath)) {
+                    vscode.window.showErrorMessage(`File not found: ${resolvedPath}`);
+                    return;
+                }
+                try {
+                    const doc = await vscode.workspace.openTextDocument(resolvedPath);
+                    await vscode.window.showTextDocument(doc);
+                }
+                catch (error) {
+                    vscode.window.showErrorMessage(`Failed to open file: ${error}`);
+                }
+            }
         });
     }
-    responsePanel.webview.html = getWebviewContent(responsePanel.webview, responseHistory);
-    responsePanel.reveal();
-    panelMessageSubscription === null || panelMessageSubscription === void 0 ? void 0 : panelMessageSubscription.dispose();
-    panelMessageSubscription = responsePanel.webview.onDidReceiveMessage(async (message) => {
-        if (message.command === 'copy') {
-            const entry = responseHistory[message.index];
-            if (!entry) {
-                return;
-            }
-            await vscode.env.clipboard.writeText(entry.response);
-            vscode.window.showInformationMessage('Response copied to clipboard.');
-        }
-        if (message.command === 'openFile') {
-            const entry = responseHistory[message.index];
-            if (!(entry === null || entry === void 0 ? void 0 : entry.filePath)) {
-                vscode.window.showErrorMessage('No file path found for this response.');
-                return;
-            }
-            const resolvedPath = path.isAbsolute(entry.filePath)
-                ? entry.filePath
-                : path.join(entry.cwd, entry.filePath);
-            if (!fs.existsSync(resolvedPath)) {
-                vscode.window.showErrorMessage(`File not found: ${resolvedPath}`);
-                return;
-            }
-            try {
-                const doc = await vscode.workspace.openTextDocument(resolvedPath);
-                await vscode.window.showTextDocument(doc);
-            }
-            catch (error) {
-                vscode.window.showErrorMessage(`Failed to open file: ${error}`);
-            }
-        }
+    getHtml(webview) {
+        const entries = responseHistory
+            .slice()
+            .reverse()
+            .map((entry, displayIndex) => {
+            const originalIndex = responseHistory.length - displayIndex - 1;
+            const escapedResponse = escapeHtml(entry.response);
+            const timestamp = new Date(entry.timestamp).toLocaleTimeString();
+            const openFileButton = entry.filePath
+                ? `<button data-index="${originalIndex}" class="open-file">Open ${escapeHtml(entry.filePath)}</button>`
+                : '';
+            return `<section class="entry">
+          <header>
+            <strong>Response ${responseHistory.length - displayIndex}</strong>
+            <span>${timestamp}</span>
+          </header>
+          <div class="actions">
+            <button data-index="${originalIndex}" class="copy">Copy</button>
+            ${openFileButton}
+          </div>
+          <pre>${escapedResponse}</pre>
+        </section>`;
+        })
+            .join('\n');
+        const cspSource = webview.cspSource;
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource}; script-src ${cspSource}; style-src ${cspSource} 'unsafe-inline';">
+  <style>
+    body { font-family: sans-serif; padding: 1rem; }
+    pre { white-space: pre-wrap; background: #111; color: #eee; padding: 1rem; border-radius: 4px; }
+    button { margin-right: 0.5rem; }
+    .entry { border-bottom: 1px solid #333; padding-bottom: 1rem; margin-bottom: 1rem; }
+    header { display: flex; justify-content: space-between; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h2>Local Code Assistant</h2>
+  ${entries || '<p>No responses yet. Use the Run Query command to get started.</p>'}
+  <script>
+    const vscode = acquireVsCodeApi();
+    document.querySelectorAll('.copy').forEach((button) => {
+      button.addEventListener('click', () => {
+        const index = Number(button.getAttribute('data-index'));
+        vscode.postMessage({ command: 'copy', index });
+      });
     });
+    document.querySelectorAll('.open-file').forEach((button) => {
+      button.addEventListener('click', () => {
+        const index = Number(button.getAttribute('data-index'));
+        vscode.postMessage({ command: 'openFile', index });
+      });
+    });
+  </script>
+</body>
+</html>`;
+    }
+    addResponse(result) {
+        result.filePath = extractFilePath(result.response);
+        responseHistory.push(result);
+        if (responseHistory.length > 10) {
+            responseHistory.shift();
+        }
+        this.refresh();
+    }
+    refresh() {
+        if (this.view) {
+            this.view.webview.html = this.getHtml(this.view.webview);
+        }
+    }
+    reveal() {
+        var _a, _b;
+        (_b = (_a = this.view) === null || _a === void 0 ? void 0 : _a.show) === null || _b === void 0 ? void 0 : _b.call(_a, true);
+    }
 }
 function extractFilePath(response) {
     const match = response.match(/Successfully wrote to '([^']+)'/);
