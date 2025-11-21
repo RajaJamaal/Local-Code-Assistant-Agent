@@ -52,8 +52,8 @@ function getConfig() {
         workingDirectory: config.get('workingDirectory', '')
     };
 }
-async function runQuery(query, output) {
-    var _a;
+async function runQuery(query, output, overrides) {
+    var _a, _b, _c, _d, _e;
     const config = getConfig();
     const workspaceFolder = (_a = vscode.workspace.workspaceFolders) === null || _a === void 0 ? void 0 : _a[0];
     if (!workspaceFolder) {
@@ -70,16 +70,26 @@ async function runQuery(query, output) {
         vscode.window.showErrorMessage(`LangGraph CLI not found at ${resolvedCliPath}`);
         return null;
     }
-    output.appendLine(`Running local agent (${config.backend}) with model '${config.model}'...`);
+    const backend = (_b = overrides === null || overrides === void 0 ? void 0 : overrides.backend) !== null && _b !== void 0 ? _b : config.backend;
+    const model = (_c = overrides === null || overrides === void 0 ? void 0 : overrides.model) !== null && _c !== void 0 ? _c : config.model;
+    const temperature = (_d = overrides === null || overrides === void 0 ? void 0 : overrides.temperature) !== null && _d !== void 0 ? _d : undefined;
+    const contextOverride = (_e = overrides === null || overrides === void 0 ? void 0 : overrides.context) !== null && _e !== void 0 ? _e : null;
+    output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
     const args = [
         resolvedCliPath,
         '--backend',
-        config.backend,
+        backend,
         '--model',
-        config.model,
-        '--json',
-        query
+        model,
+        '--json'
     ];
+    if (typeof temperature === 'number') {
+        args.push('--temperature', temperature.toString());
+    }
+    if (contextOverride && contextOverride.trim().length > 0) {
+        args.push('--context', contextOverride);
+    }
+    args.push(query);
     return new Promise((resolve, reject) => {
         const child = cp.spawn(config.pythonPath, args, { cwd });
         let stdout = '';
@@ -119,7 +129,35 @@ async function runQuery(query, output) {
 }
 function activate(context) {
     const outputChannel = vscode.window.createOutputChannel('Local Code Assistant');
-    chatViewProvider = new ChatViewProvider(context.extensionUri);
+    const handleSubmit = async (data) => {
+        var _a;
+        const prompt = (_a = data.prompt) === null || _a === void 0 ? void 0 : _a.trim();
+        if (!prompt) {
+            vscode.window.showWarningMessage('Please enter a prompt.');
+            return;
+        }
+        try {
+            const result = await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'Local Code Assistant',
+                cancellable: false
+            }, async () => runQuery(prompt, outputChannel, {
+                backend: data.backend,
+                model: data.model,
+                temperature: data.temperature,
+                context: data.context
+            }));
+            if (!result) {
+                return;
+            }
+            chatViewProvider === null || chatViewProvider === void 0 ? void 0 : chatViewProvider.addResponse(result);
+            outputChannel.show(true);
+        }
+        catch (error) {
+            vscode.window.showErrorMessage(String(error));
+        }
+    };
+    chatViewProvider = new ChatViewProvider(context.extensionUri, handleSubmit);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('localCodeAssistant.history', chatViewProvider));
     const runQueryCommand = vscode.commands.registerCommand('localCodeAssistant.runQuery', async () => {
         const query = await vscode.window.showInputBox({
@@ -191,8 +229,9 @@ function deactivate() {
     // Nothing to cleanup.
 }
 class ChatViewProvider {
-    constructor(extensionUri) {
+    constructor(extensionUri, submitHandler) {
         this.extensionUri = extensionUri;
+        this.submitHandler = submitHandler;
     }
     resolveWebviewView(webviewView, _context, _token) {
         this.view = webviewView;
@@ -202,6 +241,10 @@ class ChatViewProvider {
         };
         webviewView.webview.html = this.getHtml(webviewView.webview);
         webviewView.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'runQuery') {
+                this.submitHandler(message.data);
+                return;
+            }
             if (message.command === 'copy') {
                 const entry = responseHistory[message.index];
                 if (!entry) {
@@ -234,6 +277,8 @@ class ChatViewProvider {
         });
     }
     getHtml(webview) {
+        var _a, _b;
+        const config = getConfig();
         const entries = responseHistory
             .slice()
             .reverse()
@@ -258,24 +303,84 @@ class ChatViewProvider {
         })
             .join('\n');
         const cspSource = webview.cspSource;
+        const defaultBackend = (_a = config.backend) !== null && _a !== void 0 ? _a : 'langgraph';
+        const backendOptions = ['langgraph', 'simple']
+            .map((value) => `<option value="${value}" ${value === defaultBackend ? 'selected' : ''}>${value}</option>`)
+            .join('');
+        const defaultModel = escapeHtml((_b = config.model) !== null && _b !== void 0 ? _b : 'codellama:7b-code-q4_K_M');
+        const defaultTemp = 0.1;
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource}; script-src ${cspSource}; style-src ${cspSource} 'unsafe-inline';">
   <style>
-    body { font-family: sans-serif; padding: 1rem; }
+    body { font-family: sans-serif; padding: 1rem; color: #eee; background: #1e1e1e; }
+    form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+    textarea, select, input { width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #444; background: #2a2a2a; color: #eee; }
+    label { font-size: 0.9rem; }
+    button { background: #007acc; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #1a85ff; }
     pre { white-space: pre-wrap; background: #111; color: #eee; padding: 1rem; border-radius: 4px; }
     button { margin-right: 0.5rem; }
     .entry { border-bottom: 1px solid #333; padding-bottom: 1rem; margin-bottom: 1rem; }
     header { display: flex; justify-content: space-between; margin-bottom: 0.5rem; }
+    .actions button { margin-top: 0.25rem; }
+    .controls-row { display: flex; gap: 0.5rem; align-items: center; }
+    .controls-row label { flex: 1; }
+    .temperature-display { font-variant-numeric: tabular-nums; margin-left: 0.5rem; }
   </style>
 </head>
 <body>
   <h2>Local Code Assistant</h2>
-  ${entries || '<p>No responses yet. Use the Run Query command to get started.</p>'}
+  <form id="assistant-form">
+    <label>
+      Prompt
+      <textarea id="prompt" rows="3" placeholder="Ask the assistant..."></textarea>
+    </label>
+    <label>
+      Context (optional)
+      <textarea id="context" rows="2" placeholder="Add system context or file summary..."></textarea>
+    </label>
+    <div class="controls-row">
+      <label>Backend
+        <select id="backend">${backendOptions}</select>
+      </label>
+      <label>Model
+        <input id="model" value="${defaultModel}" />
+      </label>
+    </div>
+    <div class="controls-row">
+      <label>Temperature
+        <input type="range" id="temperature" min="0" max="1" step="0.05" value="${defaultTemp}" />
+      </label>
+      <span class="temperature-display" id="temperature-label">${defaultTemp.toFixed(2)}</span>
+    </div>
+    <button type="submit">Run</button>
+  </form>
+  <section id="responses">
+    ${entries || '<p>No responses yet. Submit a prompt to begin.</p>'}
+  </section>
   <script>
     const vscode = acquireVsCodeApi();
+    const form = document.getElementById('assistant-form');
+    const tempSlider = document.getElementById('temperature');
+    const tempLabel = document.getElementById('temperature-label');
+    tempSlider?.addEventListener('input', () => {
+      tempLabel.textContent = Number(tempSlider.value).toFixed(2);
+    });
+    form?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const prompt = document.getElementById('prompt').value;
+      const context = document.getElementById('context').value;
+      const backend = document.getElementById('backend').value;
+      const model = document.getElementById('model').value;
+      const temperature = Number(document.getElementById('temperature').value);
+      vscode.postMessage({
+        command: 'runQuery',
+        data: { prompt, context, backend, model, temperature }
+      });
+    });
     document.querySelectorAll('.copy').forEach((button) => {
       button.addEventListener('click', () => {
         const index = Number(button.getAttribute('data-index'));

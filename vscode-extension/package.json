@@ -43,12 +43,6 @@
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "localCodeAssistant.history",
-        "contents": "The response panel opens automatically when you run a command.\nClick **Open History Panel** to reopen it.\n[Open History Panel](command:localCodeAssistant.openPanel)"
-      }
-    ],
     "views": {
       "localCodeAssistant": [
         {

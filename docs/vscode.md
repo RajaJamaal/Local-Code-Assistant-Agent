@@ -24,7 +24,7 @@ Open the `vscode-extension/` folder in VSCode and press `F5` to start an **Exten
 - **Local Code Assistant: Run Query** – prompt for any command
 - **Local Code Assistant: Use Selection** – send current selection (+ optional instructions) to the CLI
 
-Responses now appear both in the output channel and in a history-enabled webview panel. The extension also contributes a sidebar view (“Local Assistant”) where you can reopen the history panel via the “Open History Panel” link.
+Responses now appear both in the output channel and in a history-enabled webview sidebar. The sidebar hosts a chat-style form with fields for the prompt, optional context, backend/model selectors, and a temperature slider—mirroring a typical coding assistant UI.
 
 For personal use, you can run `make package-extension` from the repo root to compile and package the latest extension build into a `.vsix` that VSCode can install (`code --install-extension <file>`).
 
