@@ -4,8 +4,9 @@ from src.agent.state import AgentState, ToolExecutor
 from src.tools.file_tools import tools
 
 class CodeAssistantAgent:
-    def __init__(self, model_name="codellama:7b-code-q4_K_M"):
+    def __init__(self, model_name="codellama:7b-code-q4_K_M", temperature: float = 0.1):
         self.model_name = model_name
+        self.temperature = temperature
         self.llm = self._initialize_llm()
         self.tool_executor = ToolExecutor(tools)
         self.graph = self._build_graph()
@@ -13,7 +14,7 @@ class CodeAssistantAgent:
     def _initialize_llm(self):
         return ChatOllama(
             model=self.model_name,
-            temperature=0.1,
+            temperature=self.temperature,
             num_ctx=4096
         )
 
@@ -98,11 +99,15 @@ class CodeAssistantAgent:
         
         return workflow.compile()
 
-    def invoke(self, query: str):
+    def invoke(self, query: str, context: str | None = None):
         """Run the agent with a user query."""
         try:
+            messages = []
+            if context:
+                messages.append({"role": "system", "content": context})
+            messages.append({"role": "user", "content": query})
             result = self.graph.invoke({
-                "messages": [{"role": "user", "content": query}],
+                "messages": messages,
                 "error_count": 0,
                 "current_step": "start",
                 "last_tool_used": "none"
@@ -112,7 +117,7 @@ class CodeAssistantAgent:
             return f"Agent execution error: {str(e)}"
 
 # Simple function to run the agent
-def run_agent(query: str, model_name="codellama:7b-code-q4_K_M"):
+def run_agent(query: str, model_name="codellama:7b-code-q4_K_M", temperature: float = 0.1, context: str | None = None):
     """Convenience function to run the agent."""
-    agent = CodeAssistantAgent(model_name)
-    return agent.invoke(query)
+    agent = CodeAssistantAgent(model_name, temperature=temperature)
+    return agent.invoke(query, context=context)

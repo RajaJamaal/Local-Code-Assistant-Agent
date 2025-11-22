@@ -8,6 +8,8 @@ class AgentManager:
         self.agent = None
         self.max_memory_bytes = max_memory_gb * 1024 * 1024 * 1024
         self.logger = self._setup_logging()
+        self.model_name = None
+        self.temperature = None
 
     def _setup_logging(self):
         logging.basicConfig(
@@ -20,11 +22,13 @@ class AgentManager:
         )
         return logging.getLogger(__name__)
 
-    def initialize_agent(self, model_name="codellama:7b-code-q4_K_M"):
+    def initialize_agent(self, model_name="codellama:7b-code-q4_K_M", temperature: float = 0.1):
         """Initialize the agent with memory management."""
         self.check_memory()
-        self.agent = CodeAssistantAgent(model_name)
-        self.logger.info(f"Agent initialized with model: {model_name}")
+        self.agent = CodeAssistantAgent(model_name, temperature=temperature)
+        self.model_name = model_name
+        self.temperature = temperature
+        self.logger.info(f"Agent initialized with model: {model_name} (temp={temperature})")
         return self.agent
 
     def check_memory(self):
@@ -34,14 +38,16 @@ class AgentManager:
             self.logger.warning("High memory usage detected, clearing cache")
             gc.collect()
 
-    def process_query(self, query: str):
+    def process_query(self, query: str, context: str | None = None, model_name: str | None = None, temperature: float | None = None):
         """Process a user query with error handling."""
-        if not self.agent:
-            self.initialize_agent()
+        desired_model = model_name or self.model_name or "codellama:7b-code-q4_K_M"
+        desired_temp = temperature if temperature is not None else (self.temperature or 0.1)
+        if not self.agent or desired_model != self.model_name or desired_temp != self.temperature:
+            self.initialize_agent(model_name=desired_model, temperature=desired_temp)
         
         try:
             self.check_memory()
-            response = self.agent.invoke(query)
+            response = self.agent.invoke(query, context=context)
             self.logger.info(f"Processed query: {query[:50]}...")
             return response
         except Exception as e:

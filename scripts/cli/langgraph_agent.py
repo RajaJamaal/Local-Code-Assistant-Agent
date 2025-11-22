@@ -11,13 +11,13 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-QueryRunner = Callable[[str], str]
+QueryRunner = Callable[[str, Optional[str]], str]
 USE_LANGGRAPH_MOCK = os.getenv("LANGGRAPH_AGENT_MOCK", "0") == "1"
 
 
@@ -33,7 +33,7 @@ def format_response(success: bool, message: str, json_output: bool) -> None:
         print(f"{prefix} {message}")
 
 
-def run_interactive(runner: QueryRunner, json_output: bool) -> None:
+def run_interactive(runner: QueryRunner, json_output: bool, temperature: float, context: Optional[str]) -> None:
     """Interactive REPL loop for the agent."""
     print("🤖 Local Code Assistant (type 'exit' to quit)")
     while True:
@@ -49,35 +49,35 @@ def run_interactive(runner: QueryRunner, json_output: bool) -> None:
             print("👋 Goodbye!")
             break
 
-        run_and_report(runner, user_input, json_output)
+        run_and_report(runner, user_input, context, json_output)
 
 
-def run_and_report(runner: QueryRunner, query: str, json_output: bool) -> None:
+def run_and_report(runner: QueryRunner, query: str, context: Optional[str], json_output: bool) -> None:
     """Execute a single query and format the response."""
     try:
-        response = runner(query)
+        response = runner(query, context)
         format_response(True, response, json_output)
     except Exception as exc:  # pragma: no cover - defensive logging
         format_response(False, f"Agent error: {exc}", json_output)
 
 
-def create_runner(backend: str, model_name: str) -> QueryRunner:
+def create_runner(backend: str, model_name: str, temperature: float) -> QueryRunner:
     """Return a callable that executes queries using the requested backend."""
     if backend == "simple":
         return create_simple_runner()
 
     if USE_LANGGRAPH_MOCK:
-        def mock_runner(query: str) -> str:
+        def mock_runner(query: str, _context: Optional[str]) -> str:
             return f"[Mock LangGraph response] {query}"
         return mock_runner
 
     from src.agent.manager import AgentManager  # Local import to avoid heavy deps during --help
 
     manager = AgentManager()
-    manager.initialize_agent(model_name=model_name)
+    manager.initialize_agent(model_name=model_name, temperature=temperature)
 
-    def langgraph_runner(query: str) -> str:
-        return manager.process_query(query)
+    def langgraph_runner(query: str, context: Optional[str]) -> str:
+        return manager.process_query(query, context=context, model_name=model_name, temperature=temperature)
 
     return langgraph_runner
 
@@ -101,6 +101,18 @@ def parse_args() -> argparse.Namespace:
         "--model",
         default="codellama:7b-code-q4_K_M",
         help="Name of the local Ollama model to use (LangGraph backend only).",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.1,
+        help="Sampling temperature for the LangGraph backend.",
+    )
+    parser.add_argument(
+        "--context",
+        type=str,
+        default=None,
+        help="Optional system/context message prepended before the query.",
     )
     parser.add_argument(
         "--json",
@@ -185,7 +197,9 @@ def create_simple_runner() -> QueryRunner:
             return query.split("containing", 1)[1].strip(" \"'")
         return "File created by Local Code Assistant"
 
-    def simple_runner(query: str) -> str:
+    def simple_runner(query: str, context: Optional[str]) -> str:
+        if context:
+            query = f"{context.strip()}\n\n{query}"
         lower = query.lower()
         if any(keyword in lower for keyword in ["list", "show directory", "ls", "dir"]):
             return list_directory(".")
@@ -207,12 +221,12 @@ def create_simple_runner() -> QueryRunner:
 
 def main():
     args = parse_args()
-    runner = create_runner(args.backend, args.model)
+    runner = create_runner(args.backend, args.model, args.temperature)
 
     if args.interactive or not args.command:
-        run_interactive(runner, args.json)
+        run_interactive(runner, args.json, args.temperature, args.context)
     else:
-        run_and_report(runner, args.command, args.json)
+        run_and_report(runner, args.command, args.context, args.json)
 
 
 if __name__ == "__main__":

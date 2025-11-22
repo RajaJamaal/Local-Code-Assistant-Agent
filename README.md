@@ -37,7 +37,7 @@ python scripts/cli/langgraph_agent.py --interactive --model codellama:7b-code-q4
 python scripts/cli/langgraph_agent.py --backend simple --interactive
 
 # One-off LangGraph command with JSON output (useful for VSCode integrations)
-python scripts/cli/langgraph_agent.py "Create hello.py printing hi" --json
+python scripts/cli/langgraph_agent.py "Create hello.py printing hi" --temperature 0.3 --context "Working in src/app" --json
 ```
 
 ### VSCode Extension
