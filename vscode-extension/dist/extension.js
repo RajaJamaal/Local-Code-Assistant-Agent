@@ -41,6 +41,14 @@ const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
 const responseHistory = [];
 let chatViewProvider;
+let formState = {
+    prompt: '',
+    context: '',
+    backend: 'langgraph',
+    model: 'codellama:7b-code-q4_K_M',
+    temperature: 0.1,
+    mode: 'assistant'
+};
 function getConfig() {
     const config = vscode.workspace.getConfiguration('localCodeAssistant');
     const pythonDefault = process.platform === 'win32' ? 'python' : 'python3';
@@ -53,7 +61,7 @@ function getConfig() {
     };
 }
 async function runQuery(query, output, overrides) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     const config = getConfig();
     const workspaceFolder = (_a = vscode.workspace.workspaceFolders) === null || _a === void 0 ? void 0 : _a[0];
     if (!workspaceFolder) {
@@ -74,6 +82,7 @@ async function runQuery(query, output, overrides) {
     const model = (_c = overrides === null || overrides === void 0 ? void 0 : overrides.model) !== null && _c !== void 0 ? _c : config.model;
     const temperature = (_d = overrides === null || overrides === void 0 ? void 0 : overrides.temperature) !== null && _d !== void 0 ? _d : undefined;
     const contextOverride = (_e = overrides === null || overrides === void 0 ? void 0 : overrides.context) !== null && _e !== void 0 ? _e : null;
+    const mode = (_f = overrides === null || overrides === void 0 ? void 0 : overrides.mode) !== null && _f !== void 0 ? _f : 'assistant';
     output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
     const args = [
         resolvedCliPath,
@@ -117,7 +126,17 @@ async function runQuery(query, output, overrides) {
                 const response = (_c = (_b = payload.response) !== null && _b !== void 0 ? _b : payload.error) !== null && _c !== void 0 ? _c : stdout.trim();
                 output.appendLine(response);
                 vscode.window.showInformationMessage('Local agent response received.');
-                resolve({ response, cwd, timestamp: Date.now() });
+                resolve({
+                    response,
+                    cwd,
+                    timestamp: Date.now(),
+                    prompt: query,
+                    context: contextOverride || undefined,
+                    backend,
+                    model,
+                    temperature,
+                    mode
+                });
             }
             catch (error) {
                 output.appendLine('Raw output:');
@@ -130,13 +149,24 @@ async function runQuery(query, output, overrides) {
 function activate(context) {
     const outputChannel = vscode.window.createOutputChannel('Local Code Assistant');
     outputChannel.appendLine('[local-code-assistant] Extension activated');
+    const baseConfig = getConfig();
+    formState.backend = baseConfig.backend;
+    formState.model = baseConfig.model;
     const handleSubmit = async (data) => {
-        var _a;
+        var _a, _b, _c, _d, _e, _f;
         const prompt = (_a = data.prompt) === null || _a === void 0 ? void 0 : _a.trim();
         if (!prompt) {
             vscode.window.showWarningMessage('Please enter a prompt.');
             return;
         }
+        formState = {
+            prompt,
+            context: (_b = data.context) !== null && _b !== void 0 ? _b : '',
+            backend: (_c = data.backend) !== null && _c !== void 0 ? _c : baseConfig.backend,
+            model: (_d = data.model) !== null && _d !== void 0 ? _d : baseConfig.model,
+            temperature: typeof data.temperature === 'number' ? data.temperature : ((_e = formState.temperature) !== null && _e !== void 0 ? _e : 0.1),
+            mode: (_f = data.mode) !== null && _f !== void 0 ? _f : formState.mode
+        };
         try {
             const result = await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
@@ -146,7 +176,8 @@ function activate(context) {
                 backend: data.backend,
                 model: data.model,
                 temperature: data.temperature,
-                context: data.context
+                context: data.context,
+                mode: data.mode
             }));
             if (!result) {
                 return;
@@ -241,6 +272,7 @@ class ChatViewProvider {
             localResourceRoots: [this.extensionUri]
         };
         webviewView.webview.html = this.getHtml(webviewView.webview);
+        this.postState();
         webviewView.webview.onDidReceiveMessage(async (message) => {
             if (message.command === 'runQuery') {
                 this.submitHandler(message.data);
@@ -277,6 +309,30 @@ class ChatViewProvider {
             }
         });
     }
+    postState() {
+        if (!this.view)
+            return;
+        const files = this.getWorkspaceFiles();
+        this.view.webview.postMessage({
+            command: 'hydrate',
+            formState,
+            suggestions: files
+        });
+    }
+    getWorkspaceFiles() {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders)
+            return [];
+        const uris = vscode.workspace.findFiles('**/*', '**/{.git,node_modules,.venv}/**', 50);
+        // findFiles returns Thenable<Uri[]>; handle asynchronously
+        uris.then((list) => {
+            const rel = list.map((u) => vscode.workspace.asRelativePath(u, false));
+            if (this.view) {
+                this.view.webview.postMessage({ command: 'suggestions', suggestions: rel });
+            }
+        });
+        return [];
+    }
     getHtml(webview) {
         var _a, _b;
         const config = getConfig();
@@ -299,17 +355,23 @@ class ChatViewProvider {
             <button data-index="${originalIndex}" class="copy">Copy</button>
             ${openFileButton}
           </div>
-          <pre>${escapedResponse}</pre>
+          <pre><strong>You:</strong> ${escapeHtml(entry.prompt)}${entry.context ? `<br><em>Context:</em> ${escapeHtml(entry.context)}` : ''}\n\n<strong>Assistant:</strong> ${escapedResponse}</pre>
         </section>`;
         })
             .join('\n');
         const cspSource = webview.cspSource;
-        const defaultBackend = (_a = config.backend) !== null && _a !== void 0 ? _a : 'langgraph';
+        const defaultBackend = (_b = (_a = formState.backend) !== null && _a !== void 0 ? _a : config.backend) !== null && _b !== void 0 ? _b : 'langgraph';
         const backendOptions = ['langgraph', 'simple']
             .map((value) => `<option value="${value}" ${value === defaultBackend ? 'selected' : ''}>${value}</option>`)
             .join('');
-        const defaultModel = escapeHtml((_b = config.model) !== null && _b !== void 0 ? _b : 'codellama:7b-code-q4_K_M');
-        const defaultTemp = 0.1;
+        const defaultModel = escapeHtml(formState.model || config.model || 'codellama:7b-code-q4_K_M');
+        const defaultTemp = typeof formState.temperature === 'number' ? formState.temperature : 0.1;
+        const defaultPrompt = escapeHtml(formState.prompt || '');
+        const defaultContext = escapeHtml(formState.context || '');
+        const defaultMode = formState.mode || 'assistant';
+        const modeOptions = ['assistant', 'agent']
+            .map((value) => `<option value="${value}" ${value === defaultMode ? 'selected' : ''}>${value}</option>`)
+            .join('');
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -337,11 +399,12 @@ class ChatViewProvider {
   <form id="assistant-form">
     <label>
       Prompt
-      <textarea id="prompt" rows="3" placeholder="Ask the assistant..."></textarea>
+      <textarea id="prompt" rows="3" placeholder="Ask the assistant...">${defaultPrompt}</textarea>
     </label>
     <label>
       Context (optional)
-      <textarea id="context" rows="2" placeholder="Add system context or file summary..."></textarea>
+      <textarea id="context" rows="2" list="context-suggestions" placeholder="Add system context or file summary...">${defaultContext}</textarea>
+      <datalist id="context-suggestions"></datalist>
     </label>
     <div class="controls-row">
       <label>Backend
@@ -349,6 +412,11 @@ class ChatViewProvider {
       </label>
       <label>Model
         <input id="model" value="${defaultModel}" />
+      </label>
+    </div>
+    <div class="controls-row">
+      <label>Mode
+        <select id="mode">${modeOptions}</select>
       </label>
     </div>
     <div class="controls-row">
@@ -377,10 +445,23 @@ class ChatViewProvider {
       const backend = document.getElementById('backend').value;
       const model = document.getElementById('model').value;
       const temperature = Number(document.getElementById('temperature').value);
+      const mode = document.getElementById('mode').value;
       vscode.postMessage({
         command: 'runQuery',
-        data: { prompt, context, backend, model, temperature }
+        data: { prompt, context, backend, model, temperature, mode }
       });
+    });
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (!message) return;
+      if (message.command === 'hydrate' || message.command === 'suggestions') {
+        const list = document.getElementById('context-suggestions');
+        if (list && Array.isArray(message.suggestions)) {
+          list.innerHTML = message.suggestions
+            .map((item) => '<option value="' + item + '"></option>')
+            .join('');
+        }
+      }
     });
     document.querySelectorAll('.copy').forEach((button) => {
       button.addEventListener('click', () => {
@@ -409,6 +490,7 @@ class ChatViewProvider {
     refresh() {
         if (this.view) {
             this.view.webview.html = this.getHtml(this.view.webview);
+            this.postState();
         }
     }
     reveal() {

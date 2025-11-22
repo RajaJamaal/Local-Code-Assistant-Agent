@@ -5,12 +5,26 @@ import * as fs from 'fs';
 
 const responseHistory: QueryResult[] = [];
 let chatViewProvider: ChatViewProvider | undefined;
+let formState: FormState = {
+  prompt: '',
+  context: '',
+  backend: 'langgraph',
+  model: 'codellama:7b-code-q4_K_M',
+  temperature: 0.1,
+  mode: 'assistant'
+};
 
 interface QueryResult {
   response: string;
   cwd: string;
   filePath?: string;
   timestamp: number;
+  prompt: string;
+  context?: string;
+  backend: string;
+  model: string;
+  temperature?: number;
+  mode: string;
 }
 
 function getConfig() {
@@ -30,6 +44,7 @@ interface QueryOverrides {
   model?: string;
   context?: string;
   temperature?: number;
+  mode?: string;
 }
 
 interface FormMessage {
@@ -38,6 +53,16 @@ interface FormMessage {
   backend?: string;
   model?: string;
   temperature?: number;
+  mode?: string;
+}
+
+interface FormState {
+  prompt: string;
+  context: string;
+  backend: string;
+  model: string;
+  temperature: number;
+  mode: string;
 }
 
 async function runQuery(query: string, output: vscode.OutputChannel, overrides?: QueryOverrides): Promise<QueryResult | null> {
@@ -65,6 +90,7 @@ async function runQuery(query: string, output: vscode.OutputChannel, overrides?:
   const model = overrides?.model ?? config.model;
   const temperature = overrides?.temperature ?? undefined;
   const contextOverride = overrides?.context ?? null;
+  const mode = overrides?.mode ?? 'assistant';
 
   output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
   const args = [
@@ -113,7 +139,17 @@ async function runQuery(query: string, output: vscode.OutputChannel, overrides?:
         const response = payload.response ?? payload.error ?? stdout.trim();
         output.appendLine(response);
         vscode.window.showInformationMessage('Local agent response received.');
-        resolve({ response, cwd, timestamp: Date.now() });
+        resolve({
+          response,
+          cwd,
+          timestamp: Date.now(),
+          prompt: query,
+          context: contextOverride || undefined,
+          backend,
+          model,
+          temperature,
+          mode
+        });
       } catch (error) {
         output.appendLine('Raw output:');
         output.appendLine(stdout);
@@ -127,12 +163,25 @@ export function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel('Local Code Assistant');
   outputChannel.appendLine('[local-code-assistant] Extension activated');
 
+  const baseConfig = getConfig();
+  formState.backend = baseConfig.backend;
+  formState.model = baseConfig.model;
+
   const handleSubmit = async (data: FormMessage) => {
     const prompt = data.prompt?.trim();
     if (!prompt) {
       vscode.window.showWarningMessage('Please enter a prompt.');
       return;
     }
+
+    formState = {
+      prompt,
+      context: data.context ?? '',
+      backend: data.backend ?? baseConfig.backend,
+      model: data.model ?? baseConfig.model,
+      temperature: typeof data.temperature === 'number' ? data.temperature : (formState.temperature ?? 0.1),
+      mode: data.mode ?? formState.mode
+    };
 
     try {
       const result = await vscode.window.withProgress(
@@ -145,7 +194,8 @@ export function activate(context: vscode.ExtensionContext) {
           backend: data.backend,
           model: data.model,
           temperature: data.temperature,
-          context: data.context
+          context: data.context,
+          mode: data.mode
         })
       );
 
@@ -263,6 +313,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extensionUri]
     };
     webviewView.webview.html = this.getHtml(webviewView.webview);
+    this.postState();
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       if (message.command === 'runQuery') {
@@ -301,6 +352,30 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private postState() {
+    if (!this.view) return;
+    const files = this.getWorkspaceFiles();
+    this.view.webview.postMessage({
+      command: 'hydrate',
+      formState,
+      suggestions: files
+    });
+  }
+
+  private getWorkspaceFiles(): string[] {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders) return [];
+    const uris = vscode.workspace.findFiles('**/*', '**/{.git,node_modules,.venv}/**', 50);
+    // findFiles returns Thenable<Uri[]>; handle asynchronously
+    uris.then((list) => {
+      const rel = list.map((u) => vscode.workspace.asRelativePath(u, false));
+      if (this.view) {
+        this.view.webview.postMessage({ command: 'suggestions', suggestions: rel });
+      }
+    });
+    return [];
+  }
+
   private getHtml(webview: vscode.Webview): string {
     const config = getConfig();
     const entries = responseHistory
@@ -322,21 +397,28 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
             <button data-index="${originalIndex}" class="copy">Copy</button>
             ${openFileButton}
           </div>
-          <pre>${escapedResponse}</pre>
+          <pre><strong>You:</strong> ${escapeHtml(entry.prompt)}${entry.context ? `<br><em>Context:</em> ${escapeHtml(entry.context)}` : ''}\n\n<strong>Assistant:</strong> ${escapedResponse}</pre>
         </section>`;
       })
       .join('\n');
 
     const cspSource = webview.cspSource;
-    const defaultBackend = config.backend ?? 'langgraph';
+    const defaultBackend = formState.backend ?? config.backend ?? 'langgraph';
     const backendOptions = ['langgraph', 'simple']
       .map(
         (value) =>
           `<option value="${value}" ${value === defaultBackend ? 'selected' : ''}>${value}</option>`
       )
       .join('');
-    const defaultModel = escapeHtml(config.model ?? 'codellama:7b-code-q4_K_M');
-    const defaultTemp = 0.1;
+    const defaultModel = escapeHtml(formState.model || config.model || 'codellama:7b-code-q4_K_M');
+    const defaultTemp = typeof formState.temperature === 'number' ? formState.temperature : 0.1;
+    const defaultPrompt = escapeHtml(formState.prompt || '');
+    const defaultContext = escapeHtml(formState.context || '');
+    const defaultMode = formState.mode || 'assistant';
+
+    const modeOptions = ['assistant', 'agent']
+      .map((value) => `<option value="${value}" ${value === defaultMode ? 'selected' : ''}>${value}</option>`)
+      .join('');
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -365,11 +447,12 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   <form id="assistant-form">
     <label>
       Prompt
-      <textarea id="prompt" rows="3" placeholder="Ask the assistant..."></textarea>
+      <textarea id="prompt" rows="3" placeholder="Ask the assistant...">${defaultPrompt}</textarea>
     </label>
     <label>
       Context (optional)
-      <textarea id="context" rows="2" placeholder="Add system context or file summary..."></textarea>
+      <textarea id="context" rows="2" list="context-suggestions" placeholder="Add system context or file summary...">${defaultContext}</textarea>
+      <datalist id="context-suggestions"></datalist>
     </label>
     <div class="controls-row">
       <label>Backend
@@ -377,6 +460,11 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       </label>
       <label>Model
         <input id="model" value="${defaultModel}" />
+      </label>
+    </div>
+    <div class="controls-row">
+      <label>Mode
+        <select id="mode">${modeOptions}</select>
       </label>
     </div>
     <div class="controls-row">
@@ -405,10 +493,23 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       const backend = document.getElementById('backend').value;
       const model = document.getElementById('model').value;
       const temperature = Number(document.getElementById('temperature').value);
+      const mode = document.getElementById('mode').value;
       vscode.postMessage({
         command: 'runQuery',
-        data: { prompt, context, backend, model, temperature }
+        data: { prompt, context, backend, model, temperature, mode }
       });
+    });
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (!message) return;
+      if (message.command === 'hydrate' || message.command === 'suggestions') {
+        const list = document.getElementById('context-suggestions');
+        if (list && Array.isArray(message.suggestions)) {
+          list.innerHTML = message.suggestions
+            .map((item) => '<option value="' + item + '"></option>')
+            .join('');
+        }
+      }
     });
     document.querySelectorAll('.copy').forEach((button) => {
       button.addEventListener('click', () => {
@@ -439,6 +540,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   refresh() {
     if (this.view) {
       this.view.webview.html = this.getHtml(this.view.webview);
+      this.postState();
     }
   }
 
