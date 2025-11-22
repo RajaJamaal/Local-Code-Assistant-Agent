@@ -129,6 +129,7 @@ async function runQuery(query, output, overrides) {
 }
 function activate(context) {
     const outputChannel = vscode.window.createOutputChannel('Local Code Assistant');
+    outputChannel.appendLine('[local-code-assistant] Extension activated');
     const handleSubmit = async (data) => {
         var _a;
         const prompt = (_a = data.prompt) === null || _a === void 0 ? void 0 : _a.trim();

@@ -13,7 +13,8 @@
   "activationEvents": [
     "onCommand:localCodeAssistant.runQuery",
     "onCommand:localCodeAssistant.runSelection",
-    "onView:localCodeAssistant.history"
+    "onView:localCodeAssistant.history",
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -47,7 +48,8 @@
       "localCodeAssistant": [
         {
           "id": "localCodeAssistant.history",
-          "name": "Responses"
+          "name": "Responses",
+          "type": "webview"
         }
       ]
     },

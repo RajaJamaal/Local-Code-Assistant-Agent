@@ -125,6 +125,7 @@ async function runQuery(query: string, output: vscode.OutputChannel, overrides?:
 
 export function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel('Local Code Assistant');
+  outputChannel.appendLine('[local-code-assistant] Extension activated');
 
   const handleSubmit = async (data: FormMessage) => {
     const prompt = data.prompt?.trim();
