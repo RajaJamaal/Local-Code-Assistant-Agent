@@ -640,6 +640,10 @@ let formState: FormState = {
   temperature: 0.1,
   mode: 'assistant'
 };
+const MAX_HISTORY = 20;
+const STORAGE_KEY = 'localCodeAssistant.state';
+let extContext: vscode.ExtensionContext;
+const MAX_HISTORY = 20;
 
 interface QueryResult {
   response: string;
@@ -652,6 +656,11 @@ interface QueryResult {
   model: string;
   temperature?: number;
   mode: string;
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
 }
 
 function getConfig() {
@@ -692,6 +701,11 @@ interface FormState {
   mode: string;
 }
 
+interface PersistedState {
+  form: FormState;
+  history: QueryResult[];
+}
+
 async function runQuery(
   query: string,
   output: vscode.OutputChannel,
@@ -719,11 +733,14 @@ async function runQuery(
     return null;
   }
 
-  const backend = overrides?.backend ?? config.backend;
-  const model = overrides?.model ?? config.model;
-  const temperature = overrides?.temperature ?? undefined;
+  const mode = overrides?.mode ?? formState.mode ?? 'assistant';
+  const backend =
+    mode === 'agent'
+      ? 'langgraph'
+      : overrides?.backend ?? formState.backend ?? config.backend;
+  const model = overrides?.model ?? formState.model ?? config.model;
+  const temperature = overrides?.temperature ?? formState.temperature;
   const contextOverride = overrides?.context ?? null;
-  const mode = overrides?.mode ?? 'assistant';
 
   output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
   const args = [
@@ -770,6 +787,7 @@ async function runQuery(
       try {
         const payload = JSON.parse(jsonLine);
         const response = payload.response ?? payload.error ?? stdout.trim();
+        const usage = payload.usage;
         output.appendLine(response);
         vscode.window.showInformationMessage('Local agent response received.');
         resolve({
@@ -781,7 +799,8 @@ async function runQuery(
           backend,
           model,
           temperature,
-          mode
+          mode,
+          usage
         });
       } catch (error) {
         output.appendLine('Raw output:');
@@ -795,12 +814,14 @@ async function runQuery(
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  extContext = context;
+  loadState();
   const outputChannel = vscode.window.createOutputChannel('Local Code Assistant');
   outputChannel.appendLine('[local-code-assistant] Extension activated');
 
   const baseConfig = getConfig();
-  formState.backend = baseConfig.backend;
-  formState.model = baseConfig.model;
+  formState.backend = formState.backend || baseConfig.backend;
+  formState.model = formState.model || baseConfig.model;
 
   const handleSubmit = async (data: FormMessage) => {
     const prompt = data.prompt?.trim();
@@ -1400,4 +1421,3 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
-

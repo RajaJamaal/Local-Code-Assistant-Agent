@@ -28,16 +28,16 @@ Local-first LangGraph/LangChain playground for experimenting with file-oriented 
 
 ```bash
 # Heuristic (LLM-free) workflow for simple file commands
-python scripts/cli/local_assistant.py --interactive
+python3 scripts/cli/local_assistant.py --interactive
 
 # Full LangGraph agent using the local Ollama model
-python scripts/cli/langgraph_agent.py --interactive --model codellama:7b-code-q4_K_M
+python3 scripts/cli/langgraph_agent.py --interactive --model codellama:7b-code-q4_K_M
 
 # Lightweight heuristic backend (no LLM required)
-python scripts/cli/langgraph_agent.py --backend simple --interactive
+python3 scripts/cli/langgraph_agent.py --backend simple --interactive
 
 # One-off LangGraph command with JSON output (useful for VSCode integrations)
-python scripts/cli/langgraph_agent.py "Create hello.py printing hi" --temperature 0.3 --context "Working in src/app" --json
+python3 scripts/cli/langgraph_agent.py "Create hello.py printing hi" --temperature 0.3 --context "Working in src/app" --json
 ```
 
 ### VSCode Extension
