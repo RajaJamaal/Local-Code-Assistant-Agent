@@ -9,7 +9,7 @@ interface QueryResult {
   filePath?: string;
   timestamp: number;
   prompt: string;
-  context?: string;
+  contexts?: string[];
   backend: string;
   model: string;
   temperature?: number;
@@ -24,14 +24,14 @@ interface QueryResult {
 interface QueryOverrides {
   backend?: string;
   model?: string;
-  context?: string;
+  contexts?: string[];
   temperature?: number;
   mode?: string;
 }
 
 interface FormMessage {
   prompt: string;
-  context?: string;
+  contexts?: string[];
   backend?: string;
   model?: string;
   temperature?: number;
@@ -108,13 +108,16 @@ function extractFilePath(response: string): string | undefined {
 }
 
 async function buildAugmentedContext(
-  baseContext: string | null,
+  baseContexts: string[] | null,
   prompt: string,
   workspaceUri: vscode.Uri
 ): Promise<string> {
   const pieces: string[] = [];
-  if (baseContext && baseContext.trim()) {
-    pieces.push(`User context:\n${baseContext.trim()}`);
+  if (baseContexts && baseContexts.length) {
+    const cleaned = baseContexts.filter((c) => c && c.trim()).map((c) => c.trim());
+    if (cleaned.length) {
+      pieces.push(`User context:\n${cleaned.join('\n')}`);
+    }
   }
 
   // Include open editors (small cap)
@@ -128,7 +131,7 @@ async function buildAugmentedContext(
   }
 
   // Resolve @ references in baseContext + prompt
-  const combined = `${baseContext || ''}\n${prompt}`;
+  const combined = `${(baseContexts || []).join(' ')}\n${prompt}`;
   const tokens = Array.from(new Set((combined.match(/@[^\s]+/g) || []).map((t) => t.slice(1))));
   for (const token of tokens) {
     const target = vscode.Uri.joinPath(workspaceUri, token);
@@ -176,9 +179,9 @@ async function runQuery(
   const backend = mode === 'agent' ? 'langgraph' : overrides?.backend ?? formState.backend ?? config.backend;
   const model = overrides?.model ?? formState.model ?? config.model;
   const temperature = overrides?.temperature ?? formState.temperature;
-  const baseContext = overrides?.context ?? null;
+  const baseContexts = overrides?.contexts ?? formState.contexts;
 
-  const augmentedContext = await buildAugmentedContext(baseContext, query, workspaceFolder.uri);
+  const augmentedContext = await buildAugmentedContext(baseContexts, query, workspaceFolder.uri);
 
   output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
   const args = [resolvedCliPath, '--backend', backend, '--model', model, '--json'];
@@ -217,12 +220,12 @@ async function runQuery(
         const usage = payload.usage;
         output.appendLine(response);
         vscode.window.showInformationMessage('Local agent response received.');
-        resolve({
-          response,
-          cwd,
-          timestamp: Date.now(),
-          prompt: query,
-          context: augmentedContext || undefined,
+       resolve({
+         response,
+         cwd,
+         timestamp: Date.now(),
+         prompt: query,
+          contexts: baseContexts && baseContexts.length ? baseContexts : undefined,
           backend,
           model,
           temperature,
@@ -257,7 +260,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     formState = {
       prompt,
-      context: data.context ?? '',
+      contexts: data.contexts ?? formState.contexts ?? [],
       backend: data.backend ?? baseConfig.backend,
       model: data.model ?? baseConfig.model,
       temperature: typeof data.temperature === 'number' ? data.temperature : formState.temperature ?? 0.1,
@@ -277,7 +280,7 @@ export function activate(context: vscode.ExtensionContext) {
             backend: data.backend,
             model: data.model,
             temperature: data.temperature,
-            context: data.context,
+            contexts: data.contexts,
             mode: data.mode
           })
       );
@@ -459,6 +462,14 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         const usage = entry.usage
           ? `<div class="usage">Tokens - prompt: ${entry.usage.promptTokens ?? 'n/a'}, completion: ${entry.usage.completionTokens ?? 'n/a'}, total: ${entry.usage.totalTokens ?? 'n/a'}</div>`
           : '';
+        const ctxArray = entry.contexts
+          ? entry.contexts
+          : (entry as any).context
+          ? [(entry as any).context]
+          : [];
+        const contextBlock = ctxArray.length
+          ? `<br><em>Contexts:</em> ${escapeHtml(ctxArray.join(', '))}`
+          : '';
         return `<section class="entry">
           <header>
             <strong>Response ${responseHistory.length - displayIndex}</strong>
@@ -469,7 +480,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
             <button data-index="${originalIndex}" class="copy">Copy</button>
             ${openFileButton}
           </div>
-          <pre><strong>You:</strong> ${escapeHtml(entry.prompt)}${entry.context ? `<br><em>Context:</em> ${escapeHtml(entry.context)}` : ''}\n\n<strong>Assistant:</strong> ${escapedResponse}</pre>
+          <pre><strong>You:</strong> ${escapeHtml(entry.prompt)}${contextBlock}\n\n<strong>Assistant:</strong> ${escapedResponse}</pre>
           ${usage}
         </section>`;
       })
@@ -483,7 +494,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     const defaultModel = escapeHtml(formState.model || config.model || 'codellama:7b-code-q4_K_M');
     const defaultTemp = typeof formState.temperature === 'number' ? formState.temperature : 0.1;
     const defaultPrompt = escapeHtml(formState.prompt || '');
-    const defaultContext = escapeHtml(formState.context || '');
+    const defaultContext = escapeHtml((formState.contexts || []).join(', '));
     const defaultMode = formState.mode || 'assistant';
 
     const modeOptions = ['assistant', 'agent']
@@ -564,9 +575,14 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       const tempLabel = document.getElementById('temperature-label');
 
       function readFormState() {
+        const rawContext = contextEl && 'value' in contextEl ? contextEl.value : '';
+        const contexts = rawContext
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
         return {
           prompt: promptEl && 'value' in promptEl ? promptEl.value : '',
-          context: contextEl && 'value' in contextEl ? contextEl.value : '',
+          contexts: contexts,
           backend: backendEl && 'value' in backendEl ? backendEl.value : 'langgraph',
           model: modelEl && 'value' in modelEl ? modelEl.value : '',
           temperature: tempSlider && 'value' in tempSlider ? Number(tempSlider.value) : 0.1,
@@ -578,7 +594,12 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
 
       function applyStateToForm() {
         if (promptEl && 'value' in promptEl) promptEl.value = state.prompt || '';
-        if (contextEl && 'value' in contextEl) contextEl.value = state.context || '';
+        const ctxs = Array.isArray(state.contexts)
+          ? state.contexts
+          : state.context
+          ? [state.context]
+          : [];
+        if (contextEl && 'value' in contextEl) contextEl.value = ctxs.join(', ');
         if (backendEl && 'value' in backendEl) backendEl.value = state.backend || 'langgraph';
         if (modelEl && 'value' in modelEl) modelEl.value = state.model || '';
         if (modeEl && 'value' in modeEl) modeEl.value = state.mode || 'assistant';
@@ -635,7 +656,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
             command: 'runQuery',
             data: {
               prompt: current.prompt,
-              context: current.context,
+              contexts: current.contexts,
               backend: current.backend,
               model: current.model,
               temperature: current.temperature,
