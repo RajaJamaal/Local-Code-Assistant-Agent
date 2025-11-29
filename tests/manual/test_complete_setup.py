@@ -21,7 +21,7 @@ def test_ollama_direct():
         
         start_time = time.time()
         response = ollama.generate(
-            model='codellama:7b-code-q4_K_M', 
+            model='phi4-mini:3.8b', 
             prompt='Say just "TEST SUCCESS" and nothing else',
             options={'temperature': 0.1, 'num_predict': 20}
         )

@@ -43,5 +43,5 @@ The extension contributes these settings (`File → Preferences → Settings →
 ## Tips
 
 - Use the `simple` backend when you just need deterministic file operations without waiting for the LLM.
-- When using the LangGraph backend, ensure `ollama serve` is running and the target model is pulled (`ollama pull codellama:7b-code-q4_K_M`).
+- When using the LangGraph backend, ensure `ollama serve` is running and the target model is pulled (`ollama pull phi4-mini:3.8b`).
 - The extension reads JSON output from the CLI; if you change the CLI formatting, re-run `tests/manual/test_cli_json.py` to ensure compatibility.

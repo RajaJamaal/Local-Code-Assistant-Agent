@@ -29,7 +29,7 @@ try:
     print("4. Testing Ollama connection...")
     try:
         from langchain_community.chat_models import ChatOllama
-        llm = ChatOllama(model="codellama:7b-code-q4_K_M", temperature=0.1)
+        llm = ChatOllama(model="phi4-mini:3.8b", temperature=0.1)
         print("   ✅ Ollama connection successful!")
     except Exception as e:
         print(f"   ❌ Ollama error: {e}")

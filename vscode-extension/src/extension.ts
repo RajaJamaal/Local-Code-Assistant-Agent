@@ -58,7 +58,7 @@ let formState: FormState = {
   prompt: '',
   contexts: [],
   backend: 'langgraph',
-  model: 'codellama:7b-code-q4_K_M',
+  model: 'phi4-mini:3.8b',
   temperature: 0.1,
   mode: 'assistant'
 };
@@ -73,7 +73,7 @@ function getConfig() {
     pythonPath: config.get<string>('pythonPath', pythonDefault),
     cliPath: config.get<string>('cliPath', 'scripts/cli/langgraph_agent.py'),
     backend: config.get<string>('backend', 'langgraph'),
-    model: config.get<string>('model', 'codellama:7b-code-q4_K_M'),
+    model: config.get<string>('model', 'phi4-mini:3.8b'),
     workingDirectory: config.get<string>('workingDirectory', '')
   };
 }
@@ -491,7 +491,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     const backendOptions = ['langgraph', 'simple']
       .map((value) => `<option value="${value}" ${value === defaultBackend ? 'selected' : ''}>${value}</option>`)
       .join('');
-    const defaultModel = escapeHtml(formState.model || config.model || 'codellama:7b-code-q4_K_M');
+    const defaultModel = escapeHtml(formState.model || config.model || 'phi4-mini:3.8b');
     const defaultTemp = typeof formState.temperature === 'number' ? formState.temperature : 0.1;
     const defaultPrompt = escapeHtml(formState.prompt || '');
     const defaultContext = escapeHtml((formState.contexts || []).join(', '));

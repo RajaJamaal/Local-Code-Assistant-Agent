@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="codellama:7b-code-q4_K_M",
+        default="phi4-mini:3.8b",
         help="Name of the local Ollama model to use (LangGraph backend only).",
     )
     parser.add_argument(

@@ -22,7 +22,7 @@ try:
     print(f"   ✅ Tools imported: {len(tools)} tools")
     
     print("3. Testing Ollama connection...")
-    llm = ChatOllama(model="codellama:7b-code-q4_K_M", temperature=0.1)
+    llm = ChatOllama(model="phi4-mini:3.8b", temperature=0.1)
     test_response = llm.invoke("Say just 'Hello'")
     print(f"   ✅ Ollama working: {test_response.content}")
     

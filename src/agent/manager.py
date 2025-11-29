@@ -22,7 +22,7 @@ class AgentManager:
         )
         return logging.getLogger(__name__)
 
-    def initialize_agent(self, model_name="codellama:7b-code-q4_K_M", temperature: float = 0.1):
+    def initialize_agent(self, model_name="phi4-mini:3.8b", temperature: float = 0.1):
         """Initialize the agent with memory management."""
         self.check_memory()
         self.agent = CodeAssistantAgent(model_name, temperature=temperature)
@@ -40,7 +40,7 @@ class AgentManager:
 
     def process_query(self, query: str, context: str | None = None, model_name: str | None = None, temperature: float | None = None):
         """Process a user query with error handling."""
-        desired_model = model_name or self.model_name or "codellama:7b-code-q4_K_M"
+        desired_model = model_name or self.model_name or "phi4-mini:3.8b"
         desired_temp = temperature if temperature is not None else (self.temperature or 0.1)
         if not self.agent or desired_model != self.model_name or desired_temp != self.temperature:
             self.initialize_agent(model_name=desired_model, temperature=desired_temp)
