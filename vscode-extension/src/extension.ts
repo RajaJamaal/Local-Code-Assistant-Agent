@@ -436,12 +436,12 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       const uris = await vscode.workspace.findFiles(
         '**/*',
         '**/{.git,node_modules,.venv}/**',
-        200
+        60
       );
       const rel = uris.map((u) => vscode.workspace.asRelativePath(u, false));
-      // Include both raw and @-prefixed suggestions for faster typing
       const prefixed = rel.map((p) => `@${p}`);
-      return Array.from(new Set([...prefixed, ...rel]));
+      // Limit total suggestions to keep the dropdown compact
+      return Array.from(new Set(prefixed)).slice(0, 30);
     } catch (err) {
       return [];
     }
@@ -511,6 +511,11 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     body { font-family: sans-serif; padding: 1rem; color: #eee; background: #1e1e1e; }
     form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
     textarea, select, input { width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #444; background: #2a2a2a; color: #eee; }
+    .dropdown { position: relative; }
+    .dropdown-list { position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: #1e1e1e; border: 1px solid #444; border-radius: 4px; z-index: 10; padding: 0.25rem; }
+    .dropdown-list.hidden { display: none; }
+    .dropdown-item { padding: 0.25rem 0.4rem; cursor: pointer; }
+    .dropdown-item:hover { background: #2a2a2a; }
     label { font-size: 0.9rem; }
     button { background: #007acc; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer; }
     button:hover { background: #1a85ff; }
@@ -534,8 +539,10 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     </label>
     <label>
       Context (optional, use @ to reference files/folders)
-      <input id="context" list="context-suggestions" placeholder="Add system context or file summary..." value="${defaultContext}" />
-      <datalist id="context-suggestions"></datalist>
+      <div class="dropdown">
+        <input id="context" placeholder="Add system context or file summary..." value="${defaultContext}" />
+        <div id="context-dropdown" class="dropdown-list hidden"></div>
+      </div>
     </label>
     <div class="controls-row">
       <label>Backend
@@ -568,11 +575,13 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       const form = document.getElementById('assistant-form');
       const promptEl = document.getElementById('prompt');
       const contextEl = document.getElementById('context');
+      const dropdownEl = document.getElementById('context-dropdown');
       const backendEl = document.getElementById('backend');
       const modelEl = document.getElementById('model');
       const modeEl = document.getElementById('mode');
       const tempSlider = document.getElementById('temperature');
       const tempLabel = document.getElementById('temperature-label');
+      var suggestionPool = [];
 
       function readFormState() {
         const rawContext = contextEl && 'value' in contextEl ? contextEl.value : '';
@@ -621,6 +630,48 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         }
       }
 
+      function getFilterToken() {
+        const raw = contextEl && 'value' in contextEl ? contextEl.value : '';
+        const parts = raw.split(',');
+        return parts[parts.length - 1].trim();
+      }
+
+      function setContexts(list) {
+        if (!contextEl || !('value' in contextEl)) return;
+        contextEl.value = list.join(', ') + (list.length ? ', ' : '');
+        saveStateFromForm();
+      }
+
+      function renderSuggestions(filterText) {
+        if (!dropdownEl) return;
+        const filter = filterText ? filterText.toLowerCase() : '';
+        const matches = suggestionPool
+          .filter(function (s) { return !filter || s.toLowerCase().includes(filter); })
+          .slice(0, 30);
+        if (!matches.length || !filterText.startsWith('@')) {
+          dropdownEl.classList.add('hidden');
+          dropdownEl.innerHTML = '';
+          return;
+        }
+        dropdownEl.innerHTML = matches
+          .map(function (item) { return '<div class="dropdown-item" data-value="' + item + '">' + item + '</div>'; })
+          .join('');
+        dropdownEl.classList.remove('hidden');
+        dropdownEl.querySelectorAll('.dropdown-item').forEach(function (el) {
+          el.addEventListener('mousedown', function (evt) {
+            evt.preventDefault();
+            const value = el.getAttribute('data-value');
+            if (!value) return;
+            const current = readFormState().contexts;
+            if (!current.includes(value)) {
+              current.push(value);
+            }
+            setContexts(current);
+            dropdownEl.classList.add('hidden');
+          });
+        });
+      }
+
       applyStateToForm();
 
       if (tempSlider && tempLabel) {
@@ -634,7 +685,18 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         promptEl.addEventListener('input', saveStateFromForm);
       }
       if (contextEl && 'addEventListener' in contextEl) {
-        contextEl.addEventListener('input', saveStateFromForm);
+        contextEl.addEventListener('input', function () {
+          saveStateFromForm();
+          renderSuggestions(getFilterToken());
+        });
+        contextEl.addEventListener('focus', function () {
+          renderSuggestions(getFilterToken());
+        });
+        contextEl.addEventListener('blur', function () {
+          setTimeout(function () {
+            if (dropdownEl) dropdownEl.classList.add('hidden');
+          }, 150);
+        });
       }
       if (backendEl && 'addEventListener' in backendEl) {
         backendEl.addEventListener('change', saveStateFromForm);
@@ -670,11 +732,9 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         const message = event.data;
         if (!message) return;
         if (message.command === 'hydrate' || message.command === 'suggestions') {
-          const list = document.getElementById('context-suggestions');
-          if (list && Array.isArray(message.suggestions)) {
-            list.innerHTML = message.suggestions
-              .map(function (item) { return '<option value="' + item + '"></option>'; })
-              .join('');
+          if (Array.isArray(message.suggestions)) {
+            suggestionPool = message.suggestions;
+            renderSuggestions(getFilterToken());
           }
         }
       });
