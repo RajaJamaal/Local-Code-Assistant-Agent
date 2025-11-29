@@ -70,13 +70,17 @@ function getConfig() {
   const config = vscode.workspace.getConfiguration('localCodeAssistant');
   const pythonDefault = process.platform === 'win32' ? 'python' : 'python3';
   const resolvePython = (value: string) => {
-    const envMatch = value.match(/^\$\{env:([^|}]+)(\|([^}]+))?\}$/);
-    if (envMatch) {
-      const envName = envMatch[1];
-      const fallback = envMatch[3] || pythonDefault;
-      return process.env[envName] || fallback;
+    if (!value) return pythonDefault;
+    // Expand patterns like ${env:VAR|fallback} anywhere in the string
+    const expanded = value.replace(/\$\{env:([^|}]+)(\|([^}]+))?\}/g, (_m, envName, _fb, fallback) => {
+      const envVal = process.env[envName];
+      return envVal && envVal.trim().length ? envVal : (fallback || pythonDefault);
+    });
+    if (expanded.includes('${env:')) {
+      // Fallback if something remained unresolved
+      return pythonDefault;
     }
-    return value || pythonDefault;
+    return expanded || pythonDefault;
   };
   return {
     pythonPath: resolvePython(config.get<string>('pythonPath', pythonDefault) ?? pythonDefault),
@@ -197,6 +201,7 @@ async function runQuery(
   if (augmentedContext && augmentedContext.trim()) args.push('--context', augmentedContext);
   args.push(query);
   output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
+  output.appendLine(`Python: ${config.pythonPath}`);
   output.appendLine(`Resolved CLI: ${resolvedCliPath}`);
   output.appendLine(`CWD: ${cwd}`);
   output.appendLine(`Args: ${JSON.stringify(args)}`);
@@ -500,7 +505,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           ? [(entry as any).context]
           : [];
         const contextBlock = ctxArray.length
-          ? `<br><em>Contexts:</em> ${escapeHtml(ctxArray.join(', '))}`
+          ? `<div><em>Contexts:</em> ${escapeHtml(ctxArray.join(', '))}</div>`
           : '';
         return `<section class="entry">
           <header>
@@ -512,7 +517,8 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
             <button data-index="${originalIndex}" class="copy">Copy</button>
             ${openFileButton}
           </div>
-          <pre><strong>You:</strong> ${escapeHtml(entry.prompt)}${contextBlock}\n\n<strong>Assistant:</strong> ${escapedResponse}</pre>
+          <div class="bubble user"><strong>You:</strong> ${escapeHtml(entry.prompt)}${contextBlock}</div>
+          <div class="bubble assistant"><strong>Assistant:</strong> ${escapedResponse}</div>
           ${usage}
         </section>`;
       })
@@ -557,6 +563,10 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     .actions { margin-bottom: 0.25rem; }
     .meta { font-size: 0.85rem; color: #ccc; margin-bottom: 0.25rem; }
     .usage { font-size: 0.85rem; color: #aaa; }
+    .toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.25rem; }
+    .bubble { padding: 0.75rem; border-radius: 6px; margin-bottom: 0.4rem; }
+    .bubble.user { background: #0e639c; color: #fff; }
+    .bubble.assistant { background: #222; color: #eee; border: 1px solid #444; }
     .controls-row { display: flex; gap: 0.5rem; align-items: center; }
     .controls-row label { flex: 1; }
     .temperature-display { font-variant-numeric: tabular-nums; margin-left: 0.5rem; }
@@ -565,6 +575,9 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
 <body>
   <h2>Local Code Assistant</h2>
   <form id="assistant-form">
+    <div class="toolbar">
+      <button type="button" id="new-chat">New Chat</button>
+    </div>
     <label>
       Prompt
       <textarea id="prompt" rows="3" placeholder="Ask the assistant...">${defaultPrompt}</textarea>
@@ -614,6 +627,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       const tempSlider = document.getElementById('temperature');
       const tempLabel = document.getElementById('temperature-label');
       var suggestionPool = [];
+      const newChatBtn = document.getElementById('new-chat');
 
       function readFormState() {
         const rawContext = contextEl && 'value' in contextEl ? contextEl.value : '';
@@ -660,6 +674,20 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           var t = typeof state.temperature === 'number' ? state.temperature : 0.1;
           tempLabel.textContent = t.toFixed(2);
         }
+      }
+
+      function clearInputs() {
+        if (promptEl && 'value' in promptEl) promptEl.value = '';
+        if (contextEl && 'value' in contextEl) contextEl.value = '';
+        state.prompt = '';
+        state.contexts = [];
+        vscode.setState(state);
+      }
+
+      if (newChatBtn && 'addEventListener' in newChatBtn) {
+        newChatBtn.addEventListener('click', function () {
+          clearInputs();
+        });
       }
 
       function getFilterToken() {
@@ -757,6 +785,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
               mode: current.mode
             }
           });
+          clearInputs();
         });
       }
 
