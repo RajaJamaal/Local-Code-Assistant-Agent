@@ -69,8 +69,17 @@ let extContext: vscode.ExtensionContext;
 function getConfig() {
   const config = vscode.workspace.getConfiguration('localCodeAssistant');
   const pythonDefault = process.platform === 'win32' ? 'python' : 'python3';
+  const resolvePython = (value: string) => {
+    const envMatch = value.match(/^\$\{env:([^|}]+)(\|([^}]+))?\}$/);
+    if (envMatch) {
+      const envName = envMatch[1];
+      const fallback = envMatch[3] || pythonDefault;
+      return process.env[envName] || fallback;
+    }
+    return value || pythonDefault;
+  };
   return {
-    pythonPath: config.get<string>('pythonPath', pythonDefault),
+    pythonPath: resolvePython(config.get<string>('pythonPath', pythonDefault) ?? pythonDefault),
     cliPath: config.get<string>('cliPath', 'scripts/cli/langgraph_agent.py'),
     backend: config.get<string>('backend', 'langgraph'),
     model: config.get<string>('model', 'phi4-mini:3.8b'),
@@ -183,19 +192,40 @@ async function runQuery(
 
   const augmentedContext = await buildAugmentedContext(baseContexts, query, workspaceFolder.uri);
 
-  output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
   const args = [resolvedCliPath, '--backend', backend, '--model', model, '--json'];
   if (typeof temperature === 'number') args.push('--temperature', temperature.toString());
   if (augmentedContext && augmentedContext.trim()) args.push('--context', augmentedContext);
   args.push(query);
+  output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
+  output.appendLine(`Resolved CLI: ${resolvedCliPath}`);
+  output.appendLine(`CWD: ${cwd}`);
+  output.appendLine(`Args: ${JSON.stringify(args)}`);
+  output.appendLine(`Context bytes: ${Buffer.byteLength(augmentedContext || '', 'utf8')}, prompt len: ${query.length}`);
 
   return new Promise<QueryResult>((resolve, reject) => {
+    const start = Date.now();
+    const timeoutMs = 60000;
     const child = cp.spawn(config.pythonPath, args, { cwd });
     let stdout = '';
     let stderr = '';
+    const timer = setTimeout(() => {
+      output.appendLine(`[timeout] No response after ${timeoutMs / 1000}s, killing process.`);
+      try {
+        child.kill('SIGKILL');
+      } catch (err) {
+        // ignore
+      }
+    }, timeoutMs);
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      output.appendLine(`[spawn-error] ${String(err)}`);
+      reject(err);
+    });
 
     child.stdout.on('data', (data) => {
       stdout += data.toString();
+      output.appendLine(`[stdout] ${data.toString().slice(0, 4000)}`);
     });
 
     child.stderr.on('data', (data) => {
@@ -205,6 +235,8 @@ async function runQuery(
     });
 
     child.on('close', (code) => {
+      clearTimeout(timer);
+      output.appendLine(`[exit] code=${code} elapsed=${Date.now() - start}ms`);
       if (code !== 0) {
         const error = new Error(`Local agent exited with code ${code}`);
         if (stderr) {
