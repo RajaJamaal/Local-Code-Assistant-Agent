@@ -74,7 +74,7 @@
         },
         "localCodeAssistant.model": {
           "type": "string",
-          "default": "codellama:7b-code-q4_K_M",
+          "default": "phi4-mini:3.8b",
           "description": "Ollama model name passed to the CLI."
         },
         "localCodeAssistant.workingDirectory": {
