@@ -4,7 +4,7 @@ from src.agent.state import AgentState, ToolExecutor
 from src.tools.file_tools import tools
 
 class CodeAssistantAgent:
-    def __init__(self, model_name="codellama:7b-code-q4_K_M", temperature: float = 0.1):
+    def __init__(self, model_name="phi4-mini:3.8b", temperature: float = 0.1):
         self.model_name = model_name
         self.temperature = temperature
         self.llm = self._initialize_llm()
@@ -117,7 +117,7 @@ class CodeAssistantAgent:
             return f"Agent execution error: {str(e)}"
 
 # Simple function to run the agent
-def run_agent(query: str, model_name="codellama:7b-code-q4_K_M", temperature: float = 0.1, context: str | None = None):
+def run_agent(query: str, model_name="phi4-mini:3.8b", temperature: float = 0.1, context: str | None = None):
     """Convenience function to run the agent."""
     agent = CodeAssistantAgent(model_name, temperature=temperature)
     return agent.invoke(query, context=context)

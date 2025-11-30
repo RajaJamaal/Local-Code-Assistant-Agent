@@ -17,13 +17,13 @@ try:
     from agent.graph import CodeAssistantAgent
     
     print("2. Creating agent instance...")
-    agent = CodeAssistantAgent("codellama:7b-code-q4_K_M")
+    agent = CodeAssistantAgent("phi4-mini:3.8b")
     print("   ✅ Agent created successfully!")
     
     print("3. Testing simple agent query...")
     # First test without tools to see if basic LLM works
     from langchain_community.chat_models import ChatOllama
-    llm = ChatOllama(model="codellama:7b-code-q4_K_M", temperature=0.1)
+    llm = ChatOllama(model="phi4-mini:3.8b", temperature=0.1)
     simple_response = llm.invoke("Write a one-line Python function that returns 'hello world'")
     print(f"   ✅ Basic LLM response: {simple_response.content[:100]}...")
     

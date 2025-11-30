@@ -27,6 +27,7 @@ interface QueryOverrides {
   contexts?: string[];
   temperature?: number;
   mode?: string;
+  includeHistory?: boolean;
 }
 
 interface FormMessage {
@@ -36,6 +37,7 @@ interface FormMessage {
   model?: string;
   temperature?: number;
   mode?: string;
+  includeHistory?: boolean;
 }
 
 interface FormState {
@@ -45,6 +47,8 @@ interface FormState {
   model: string;
   temperature: number;
   mode: string;
+  includeHistory: boolean;
+  showHistory: boolean;
 }
 
 interface PersistedState {
@@ -58,9 +62,11 @@ let formState: FormState = {
   prompt: '',
   contexts: [],
   backend: 'langgraph',
-  model: 'codellama:7b-code-q4_K_M',
+  model: 'phi4-mini:3.8b',
   temperature: 0.1,
-  mode: 'assistant'
+  mode: 'assistant',
+  includeHistory: false,
+  showHistory: false
 };
 const MAX_HISTORY = 20;
 const STORAGE_KEY = 'localCodeAssistant.state';
@@ -69,18 +75,40 @@ let extContext: vscode.ExtensionContext;
 function getConfig() {
   const config = vscode.workspace.getConfiguration('localCodeAssistant');
   const pythonDefault = process.platform === 'win32' ? 'python' : 'python3';
+  const resolvePython = (value: string) => {
+    if (!value) return pythonDefault;
+    // Expand patterns like ${env:VAR|fallback} anywhere in the string
+    const expanded = value.replace(/\$\{env:([^|}]+)(\|([^}]+))?\}/g, (_m, envName, _fb, fallback) => {
+      const envVal = process.env[envName];
+      return envVal && envVal.trim().length ? envVal : (fallback || pythonDefault);
+    });
+    if (expanded.includes('${env:')) {
+      // Fallback if something remained unresolved
+      return pythonDefault;
+    }
+    return expanded || pythonDefault;
+  };
   return {
-    pythonPath: config.get<string>('pythonPath', pythonDefault),
+    pythonPath: resolvePython(config.get<string>('pythonPath', pythonDefault) ?? pythonDefault),
     cliPath: config.get<string>('cliPath', 'scripts/cli/langgraph_agent.py'),
     backend: config.get<string>('backend', 'langgraph'),
-    model: config.get<string>('model', 'codellama:7b-code-q4_K_M'),
+    model: config.get<string>('model', 'phi4-mini:3.8b'),
     workingDirectory: config.get<string>('workingDirectory', '')
   };
 }
 
 function persistState() {
   if (!extContext) return;
-  const payload: PersistedState = { form: formState, history: responseHistory };
+  const payload: PersistedState = {
+    form: {
+      ...formState,
+      prompt: '',
+      contexts: [],
+      includeHistory: formState.includeHistory ?? false,
+      showHistory: false
+    },
+    history: responseHistory
+  };
   extContext.globalState.update(STORAGE_KEY, payload);
 }
 
@@ -88,7 +116,14 @@ function loadState() {
   if (!extContext) return;
   const data = extContext.globalState.get<PersistedState>(STORAGE_KEY);
   if (data) {
-    formState = { ...formState, ...data.form };
+    formState = {
+      ...formState,
+      ...data.form,
+      prompt: '',
+      contexts: [],
+      includeHistory: data.form?.includeHistory ?? false,
+      showHistory: false
+    };
     responseHistory.splice(0, responseHistory.length, ...data.history.slice(-MAX_HISTORY));
   }
 }
@@ -179,23 +214,58 @@ async function runQuery(
   const backend = mode === 'agent' ? 'langgraph' : overrides?.backend ?? formState.backend ?? config.backend;
   const model = overrides?.model ?? formState.model ?? config.model;
   const temperature = overrides?.temperature ?? formState.temperature;
-  const baseContexts = overrides?.contexts ?? formState.contexts;
+  const includeHistory = overrides?.includeHistory ?? formState.includeHistory;
+
+  let baseContexts = overrides?.contexts ?? formState.contexts;
+  if (includeHistory && responseHistory.length) {
+    const lastTurns = responseHistory.slice(-5);
+    const historyText = lastTurns
+      .map((h, idx) => {
+        const num = lastTurns.length - idx;
+        const ctx = h.contexts && h.contexts.length ? `\nContexts: ${h.contexts.join(', ')}` : '';
+        return `Turn ${num}\nUser: ${h.prompt}${ctx}\nAssistant: ${h.response}`;
+      })
+      .join('\n\n');
+    baseContexts = [`Chat history:\n${historyText}`, ...baseContexts];
+  }
 
   const augmentedContext = await buildAugmentedContext(baseContexts, query, workspaceFolder.uri);
 
-  output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
   const args = [resolvedCliPath, '--backend', backend, '--model', model, '--json'];
   if (typeof temperature === 'number') args.push('--temperature', temperature.toString());
   if (augmentedContext && augmentedContext.trim()) args.push('--context', augmentedContext);
   args.push(query);
+  output.appendLine(`Running local agent (${backend}) with model '${model}'...`);
+  output.appendLine(`Python: ${config.pythonPath}`);
+  output.appendLine(`Resolved CLI: ${resolvedCliPath}`);
+  output.appendLine(`CWD: ${cwd}`);
+  output.appendLine(`Args: ${JSON.stringify(args)}`);
+  output.appendLine(`Context bytes: ${Buffer.byteLength(augmentedContext || '', 'utf8')}, prompt len: ${query.length}`);
 
   return new Promise<QueryResult>((resolve, reject) => {
+    const start = Date.now();
+    const timeoutMs = 60000;
     const child = cp.spawn(config.pythonPath, args, { cwd });
     let stdout = '';
     let stderr = '';
+    const timer = setTimeout(() => {
+      output.appendLine(`[timeout] No response after ${timeoutMs / 1000}s, killing process.`);
+      try {
+        child.kill('SIGKILL');
+      } catch (err) {
+        // ignore
+      }
+    }, timeoutMs);
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      output.appendLine(`[spawn-error] ${String(err)}`);
+      reject(err);
+    });
 
     child.stdout.on('data', (data) => {
       stdout += data.toString();
+      output.appendLine(`[stdout] ${data.toString().slice(0, 4000)}`);
     });
 
     child.stderr.on('data', (data) => {
@@ -205,6 +275,8 @@ async function runQuery(
     });
 
     child.on('close', (code) => {
+      clearTimeout(timer);
+      output.appendLine(`[exit] code=${code} elapsed=${Date.now() - start}ms`);
       if (code !== 0) {
         const error = new Error(`Local agent exited with code ${code}`);
         if (stderr) {
@@ -264,7 +336,9 @@ export function activate(context: vscode.ExtensionContext) {
       backend: data.backend ?? baseConfig.backend,
       model: data.model ?? baseConfig.model,
       temperature: typeof data.temperature === 'number' ? data.temperature : formState.temperature ?? 0.1,
-      mode: data.mode ?? formState.mode
+      mode: data.mode ?? formState.mode,
+      includeHistory: typeof data.includeHistory === 'boolean' ? data.includeHistory : formState.includeHistory,
+      showHistory: formState.showHistory ?? false
     };
     persistState();
 
@@ -390,6 +464,14 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         this.submitHandler(message.data as FormMessage);
         return;
       }
+      if (message.command === 'newChat') {
+        responseHistory.splice(0, responseHistory.length);
+        formState.prompt = '';
+        formState.contexts = [];
+        persistState();
+        this.refresh();
+        return;
+      }
       if (message.command === 'copy') {
         const entry = responseHistory[message.index];
         if (!entry) return;
@@ -468,7 +550,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           ? [(entry as any).context]
           : [];
         const contextBlock = ctxArray.length
-          ? `<br><em>Contexts:</em> ${escapeHtml(ctxArray.join(', '))}`
+          ? `<div><em>Contexts:</em> ${escapeHtml(ctxArray.join(', '))}</div>`
           : '';
         return `<section class="entry">
           <header>
@@ -480,7 +562,8 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
             <button data-index="${originalIndex}" class="copy">Copy</button>
             ${openFileButton}
           </div>
-          <pre><strong>You:</strong> ${escapeHtml(entry.prompt)}${contextBlock}\n\n<strong>Assistant:</strong> ${escapedResponse}</pre>
+          <div class="bubble user"><strong>You:</strong> ${escapeHtml(entry.prompt)}${contextBlock}</div>
+          <div class="bubble assistant"><strong>Assistant:</strong> ${escapedResponse}</div>
           ${usage}
         </section>`;
       })
@@ -491,7 +574,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     const backendOptions = ['langgraph', 'simple']
       .map((value) => `<option value="${value}" ${value === defaultBackend ? 'selected' : ''}>${value}</option>`)
       .join('');
-    const defaultModel = escapeHtml(formState.model || config.model || 'codellama:7b-code-q4_K_M');
+    const defaultModel = escapeHtml(formState.model || config.model || 'phi4-mini:3.8b');
     const defaultTemp = typeof formState.temperature === 'number' ? formState.temperature : 0.1;
     const defaultPrompt = escapeHtml(formState.prompt || '');
     const defaultContext = escapeHtml((formState.contexts || []).join(', '));
@@ -525,6 +608,14 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     .actions { margin-bottom: 0.25rem; }
     .meta { font-size: 0.85rem; color: #ccc; margin-bottom: 0.25rem; }
     .usage { font-size: 0.85rem; color: #aaa; }
+    .toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.25rem; }
+    .bubble { padding: 0.75rem; border-radius: 6px; margin-bottom: 0.4rem; }
+    .bubble.user { background: #0e639c; color: #fff; }
+    .bubble.assistant { background: #222; color: #eee; border: 1px solid #444; }
+    .toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.25rem; }
+    .bubble { padding: 0.75rem; border-radius: 6px; margin-bottom: 0.4rem; }
+    .bubble.user { background: #0e639c; color: #fff; }
+    .bubble.assistant { background: #222; color: #eee; border: 1px solid #444; }
     .controls-row { display: flex; gap: 0.5rem; align-items: center; }
     .controls-row label { flex: 1; }
     .temperature-display { font-variant-numeric: tabular-nums; margin-left: 0.5rem; }
@@ -533,6 +624,14 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
 <body>
   <h2>Local Code Assistant</h2>
   <form id="assistant-form">
+    <div class="toolbar">
+      <button type="button" id="new-chat">New Chat</button>
+      <label style="display:flex;align-items:center;gap:0.25rem;">
+        <input type="checkbox" id="include-history" />
+        <span style="font-size:0.85rem;">Include history in context</span>
+      </label>
+      <button type="button" id="toggle-history">History</button>
+    </div>
     <label>
       Prompt
       <textarea id="prompt" rows="3" placeholder="Ask the assistant...">${defaultPrompt}</textarea>
@@ -568,6 +667,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   <section id="responses">
     ${entries || '<p>No responses yet. Submit a prompt to begin.</p>'}
   </section>
+  <div id="history-placeholder" style="display:none; color:#ccc;">History is hidden. Click History to view previous responses.</div>
   <script>
     (function () {
       const vscode = acquireVsCodeApi();
@@ -582,6 +682,11 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       const tempSlider = document.getElementById('temperature');
       const tempLabel = document.getElementById('temperature-label');
       var suggestionPool = [];
+      const newChatBtn = document.getElementById('new-chat');
+      const includeHistoryEl = document.getElementById('include-history');
+      const toggleHistoryBtn = document.getElementById('toggle-history');
+      const responsesEl = document.getElementById('responses');
+      const historyPlaceholder = document.getElementById('history-placeholder');
 
       function readFormState() {
         const rawContext = contextEl && 'value' in contextEl ? contextEl.value : '';
@@ -595,11 +700,13 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           backend: backendEl && 'value' in backendEl ? backendEl.value : 'langgraph',
           model: modelEl && 'value' in modelEl ? modelEl.value : '',
           temperature: tempSlider && 'value' in tempSlider ? Number(tempSlider.value) : 0.1,
-          mode: modeEl && 'value' in modeEl ? modeEl.value : 'assistant'
+          mode: modeEl && 'value' in modeEl ? modeEl.value : 'assistant',
+          includeHistory: includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false,
+          showHistory: (state && state.showHistory) || false
         };
       }
 
-      var state = vscode.getState() || readFormState();
+      var state = vscode.getState() || { ...readFormState(), showHistory: false };
 
       function applyStateToForm() {
         if (promptEl && 'value' in promptEl) promptEl.value = state.prompt || '';
@@ -619,15 +726,44 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           var t = typeof state.temperature === 'number' ? state.temperature : 0.1;
           tempLabel.textContent = t.toFixed(2);
         }
+        if (includeHistoryEl && 'checked' in includeHistoryEl) includeHistoryEl.checked = !!(state as any).includeHistory;
+        renderHistoryVisibility();
       }
 
       function saveStateFromForm() {
-        state = readFormState();
+        const next = readFormState();
+        state = { ...state, ...next };
         vscode.setState(state);
         if (tempLabel) {
           var t = typeof state.temperature === 'number' ? state.temperature : 0.1;
           tempLabel.textContent = t.toFixed(2);
         }
+      }
+
+      function renderHistoryVisibility() {
+        if (responsesEl) responsesEl.style.display = state.showHistory ? 'block' : 'none';
+        if (historyPlaceholder) historyPlaceholder.style.display = state.showHistory ? 'none' : 'block';
+        if (toggleHistoryBtn && 'textContent' in toggleHistoryBtn) {
+          toggleHistoryBtn.textContent = state.showHistory ? 'Hide History' : 'Show History';
+        }
+      }
+
+      function clearInputs() {
+        if (promptEl && 'value' in promptEl) promptEl.value = '';
+        if (contextEl && 'value' in contextEl) contextEl.value = '';
+        state.prompt = '';
+        state.contexts = [];
+        state.includeHistory = includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false;
+        state.showHistory = false;
+        vscode.setState(state);
+      }
+
+      if (newChatBtn && 'addEventListener' in newChatBtn) {
+        newChatBtn.addEventListener('click', function () {
+          clearInputs();
+          vscode.postMessage({ command: 'newChat' });
+          renderHistoryVisibility();
+        });
       }
 
       function getFilterToken() {
@@ -707,6 +843,16 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       if (modeEl && 'addEventListener' in modeEl) {
         modeEl.addEventListener('change', saveStateFromForm);
       }
+      if (includeHistoryEl && 'addEventListener' in includeHistoryEl) {
+        includeHistoryEl.addEventListener('change', saveStateFromForm);
+      }
+      if (toggleHistoryBtn && 'addEventListener' in toggleHistoryBtn) {
+        toggleHistoryBtn.addEventListener('click', function () {
+          state.showHistory = !state.showHistory;
+          vscode.setState(state);
+          renderHistoryVisibility();
+        });
+      }
 
       if (form) {
         form.addEventListener('submit', function (event) {
@@ -718,13 +864,15 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
             command: 'runQuery',
             data: {
               prompt: current.prompt,
-              contexts: current.contexts,
-              backend: current.backend,
-              model: current.model,
-              temperature: current.temperature,
-              mode: current.mode
-            }
-          });
+            contexts: current.contexts,
+            backend: current.backend,
+            model: current.model,
+            temperature: current.temperature,
+            mode: current.mode,
+            includeHistory: includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false
+          }
+        });
+          clearInputs();
         });
       }
 

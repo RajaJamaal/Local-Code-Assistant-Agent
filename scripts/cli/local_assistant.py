@@ -16,7 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description="Local AI Code Assistant")
     parser.add_argument("command", nargs="?", help="Command to execute")
     parser.add_argument("--interactive", "-i", action="store_true", help="Interactive mode")
-    parser.add_argument("--model", default="codellama:7b-code-q4_K_M", help="Ollama model to use")
+    parser.add_argument("--model", default="phi4-mini:3.8b", help="Ollama model to use")
     
     args = parser.parse_args()
     

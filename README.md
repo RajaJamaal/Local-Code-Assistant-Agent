@@ -13,9 +13,9 @@ Local-first LangGraph/LangChain playground for experimenting with file-oriented 
 ## Prerequisites
 
 1. Install [Ollama](https://ollama.com) and ensure the service is running.
-2. Pull a compatible model (default is `codellama:7b-code-q4_K_M`):
+2. Pull a compatible model (default is `phi4-mini:3.8b`):
    ```bash
-   ollama pull codellama:7b-code-q4_K_M
+   ollama pull phi4-mini:3.8b
    ```
 3. Create a virtual environment and install dependencies:
    ```bash
@@ -31,7 +31,7 @@ Local-first LangGraph/LangChain playground for experimenting with file-oriented 
 python3 scripts/cli/local_assistant.py --interactive
 
 # Full LangGraph agent using the local Ollama model
-python3 scripts/cli/langgraph_agent.py --interactive --model codellama:7b-code-q4_K_M
+python3 scripts/cli/langgraph_agent.py --interactive --model phi4-mini:3.8b
 
 # Lightweight heuristic backend (no LLM required)
 python3 scripts/cli/langgraph_agent.py --backend simple --interactive

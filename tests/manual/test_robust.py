@@ -107,7 +107,7 @@ def test_ollama_direct_quick():
         
         def quick_ollama():
             response = ollama.generate(
-                model='codellama:7b-code-q4_K_M', 
+                model='phi4-mini:3.8b', 
                 prompt='Reply with only: OK',
                 options={'temperature': 0.1, 'num_predict': 5}
             )
@@ -159,4 +159,4 @@ if __name__ == "__main__":
         print("💡 Debug steps:")
         print("   - Check Ollama service: systemctl status ollama")
         print("   - Verify model: ollama list")
-        print("   - Test model directly: ollama run codellama:7b-code-q4_K_M 'hi'")
+        print("   - Test model directly: ollama run phi4-mini:3.8b 'hi'")
