@@ -27,6 +27,7 @@ interface QueryOverrides {
   contexts?: string[];
   temperature?: number;
   mode?: string;
+  includeHistory?: boolean;
 }
 
 interface FormMessage {
@@ -36,6 +37,7 @@ interface FormMessage {
   model?: string;
   temperature?: number;
   mode?: string;
+  includeHistory?: boolean;
 }
 
 interface FormState {
@@ -45,6 +47,8 @@ interface FormState {
   model: string;
   temperature: number;
   mode: string;
+  includeHistory: boolean;
+  showHistory: boolean;
 }
 
 interface PersistedState {
@@ -60,7 +64,9 @@ let formState: FormState = {
   backend: 'langgraph',
   model: 'phi4-mini:3.8b',
   temperature: 0.1,
-  mode: 'assistant'
+  mode: 'assistant',
+  includeHistory: false,
+  showHistory: false
 };
 const MAX_HISTORY = 20;
 const STORAGE_KEY = 'localCodeAssistant.state';
@@ -93,7 +99,16 @@ function getConfig() {
 
 function persistState() {
   if (!extContext) return;
-  const payload: PersistedState = { form: formState, history: responseHistory };
+  const payload: PersistedState = {
+    form: {
+      ...formState,
+      prompt: '',
+      contexts: [],
+      includeHistory: formState.includeHistory ?? false,
+      showHistory: false
+    },
+    history: responseHistory
+  };
   extContext.globalState.update(STORAGE_KEY, payload);
 }
 
@@ -101,7 +116,14 @@ function loadState() {
   if (!extContext) return;
   const data = extContext.globalState.get<PersistedState>(STORAGE_KEY);
   if (data) {
-    formState = { ...formState, ...data.form };
+    formState = {
+      ...formState,
+      ...data.form,
+      prompt: '',
+      contexts: [],
+      includeHistory: data.form?.includeHistory ?? false,
+      showHistory: false
+    };
     responseHistory.splice(0, responseHistory.length, ...data.history.slice(-MAX_HISTORY));
   }
 }
@@ -192,7 +214,20 @@ async function runQuery(
   const backend = mode === 'agent' ? 'langgraph' : overrides?.backend ?? formState.backend ?? config.backend;
   const model = overrides?.model ?? formState.model ?? config.model;
   const temperature = overrides?.temperature ?? formState.temperature;
-  const baseContexts = overrides?.contexts ?? formState.contexts;
+  const includeHistory = overrides?.includeHistory ?? formState.includeHistory;
+
+  let baseContexts = overrides?.contexts ?? formState.contexts;
+  if (includeHistory && responseHistory.length) {
+    const lastTurns = responseHistory.slice(-5);
+    const historyText = lastTurns
+      .map((h, idx) => {
+        const num = lastTurns.length - idx;
+        const ctx = h.contexts && h.contexts.length ? `\nContexts: ${h.contexts.join(', ')}` : '';
+        return `Turn ${num}\nUser: ${h.prompt}${ctx}\nAssistant: ${h.response}`;
+      })
+      .join('\n\n');
+    baseContexts = [`Chat history:\n${historyText}`, ...baseContexts];
+  }
 
   const augmentedContext = await buildAugmentedContext(baseContexts, query, workspaceFolder.uri);
 
@@ -301,7 +336,9 @@ export function activate(context: vscode.ExtensionContext) {
       backend: data.backend ?? baseConfig.backend,
       model: data.model ?? baseConfig.model,
       temperature: typeof data.temperature === 'number' ? data.temperature : formState.temperature ?? 0.1,
-      mode: data.mode ?? formState.mode
+      mode: data.mode ?? formState.mode,
+      includeHistory: typeof data.includeHistory === 'boolean' ? data.includeHistory : formState.includeHistory,
+      showHistory: formState.showHistory ?? false
     };
     persistState();
 
@@ -425,6 +462,14 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message) => {
       if (message.command === 'runQuery') {
         this.submitHandler(message.data as FormMessage);
+        return;
+      }
+      if (message.command === 'newChat') {
+        responseHistory.splice(0, responseHistory.length);
+        formState.prompt = '';
+        formState.contexts = [];
+        persistState();
+        this.refresh();
         return;
       }
       if (message.command === 'copy') {
@@ -567,6 +612,10 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     .bubble { padding: 0.75rem; border-radius: 6px; margin-bottom: 0.4rem; }
     .bubble.user { background: #0e639c; color: #fff; }
     .bubble.assistant { background: #222; color: #eee; border: 1px solid #444; }
+    .toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.25rem; }
+    .bubble { padding: 0.75rem; border-radius: 6px; margin-bottom: 0.4rem; }
+    .bubble.user { background: #0e639c; color: #fff; }
+    .bubble.assistant { background: #222; color: #eee; border: 1px solid #444; }
     .controls-row { display: flex; gap: 0.5rem; align-items: center; }
     .controls-row label { flex: 1; }
     .temperature-display { font-variant-numeric: tabular-nums; margin-left: 0.5rem; }
@@ -577,6 +626,11 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   <form id="assistant-form">
     <div class="toolbar">
       <button type="button" id="new-chat">New Chat</button>
+      <label style="display:flex;align-items:center;gap:0.25rem;">
+        <input type="checkbox" id="include-history" />
+        <span style="font-size:0.85rem;">Include history in context</span>
+      </label>
+      <button type="button" id="toggle-history">History</button>
     </div>
     <label>
       Prompt
@@ -613,6 +667,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   <section id="responses">
     ${entries || '<p>No responses yet. Submit a prompt to begin.</p>'}
   </section>
+  <div id="history-placeholder" style="display:none; color:#ccc;">History is hidden. Click History to view previous responses.</div>
   <script>
     (function () {
       const vscode = acquireVsCodeApi();
@@ -628,6 +683,10 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       const tempLabel = document.getElementById('temperature-label');
       var suggestionPool = [];
       const newChatBtn = document.getElementById('new-chat');
+      const includeHistoryEl = document.getElementById('include-history');
+      const toggleHistoryBtn = document.getElementById('toggle-history');
+      const responsesEl = document.getElementById('responses');
+      const historyPlaceholder = document.getElementById('history-placeholder');
 
       function readFormState() {
         const rawContext = contextEl && 'value' in contextEl ? contextEl.value : '';
@@ -641,11 +700,13 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           backend: backendEl && 'value' in backendEl ? backendEl.value : 'langgraph',
           model: modelEl && 'value' in modelEl ? modelEl.value : '',
           temperature: tempSlider && 'value' in tempSlider ? Number(tempSlider.value) : 0.1,
-          mode: modeEl && 'value' in modeEl ? modeEl.value : 'assistant'
+          mode: modeEl && 'value' in modeEl ? modeEl.value : 'assistant',
+          includeHistory: includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false,
+          showHistory: (state && state.showHistory) || false
         };
       }
 
-      var state = vscode.getState() || readFormState();
+      var state = vscode.getState() || { ...readFormState(), showHistory: false };
 
       function applyStateToForm() {
         if (promptEl && 'value' in promptEl) promptEl.value = state.prompt || '';
@@ -665,14 +726,25 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           var t = typeof state.temperature === 'number' ? state.temperature : 0.1;
           tempLabel.textContent = t.toFixed(2);
         }
+        if (includeHistoryEl && 'checked' in includeHistoryEl) includeHistoryEl.checked = !!(state as any).includeHistory;
+        renderHistoryVisibility();
       }
 
       function saveStateFromForm() {
-        state = readFormState();
+        const next = readFormState();
+        state = { ...state, ...next };
         vscode.setState(state);
         if (tempLabel) {
           var t = typeof state.temperature === 'number' ? state.temperature : 0.1;
           tempLabel.textContent = t.toFixed(2);
+        }
+      }
+
+      function renderHistoryVisibility() {
+        if (responsesEl) responsesEl.style.display = state.showHistory ? 'block' : 'none';
+        if (historyPlaceholder) historyPlaceholder.style.display = state.showHistory ? 'none' : 'block';
+        if (toggleHistoryBtn && 'textContent' in toggleHistoryBtn) {
+          toggleHistoryBtn.textContent = state.showHistory ? 'Hide History' : 'Show History';
         }
       }
 
@@ -681,12 +753,16 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         if (contextEl && 'value' in contextEl) contextEl.value = '';
         state.prompt = '';
         state.contexts = [];
+        state.includeHistory = includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false;
+        state.showHistory = false;
         vscode.setState(state);
       }
 
       if (newChatBtn && 'addEventListener' in newChatBtn) {
         newChatBtn.addEventListener('click', function () {
           clearInputs();
+          vscode.postMessage({ command: 'newChat' });
+          renderHistoryVisibility();
         });
       }
 
@@ -767,6 +843,16 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       if (modeEl && 'addEventListener' in modeEl) {
         modeEl.addEventListener('change', saveStateFromForm);
       }
+      if (includeHistoryEl && 'addEventListener' in includeHistoryEl) {
+        includeHistoryEl.addEventListener('change', saveStateFromForm);
+      }
+      if (toggleHistoryBtn && 'addEventListener' in toggleHistoryBtn) {
+        toggleHistoryBtn.addEventListener('click', function () {
+          state.showHistory = !state.showHistory;
+          vscode.setState(state);
+          renderHistoryVisibility();
+        });
+      }
 
       if (form) {
         form.addEventListener('submit', function (event) {
@@ -778,13 +864,14 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
             command: 'runQuery',
             data: {
               prompt: current.prompt,
-              contexts: current.contexts,
-              backend: current.backend,
-              model: current.model,
-              temperature: current.temperature,
-              mode: current.mode
-            }
-          });
+            contexts: current.contexts,
+            backend: current.backend,
+            model: current.model,
+            temperature: current.temperature,
+            mode: current.mode,
+            includeHistory: includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false
+          }
+        });
           clearInputs();
         });
       }
