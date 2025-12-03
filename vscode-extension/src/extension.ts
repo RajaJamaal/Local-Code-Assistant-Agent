@@ -66,7 +66,7 @@ let formState: FormState = {
   temperature: 0.1,
   mode: 'assistant',
   includeHistory: false,
-  showHistory: false
+  showHistory: true
 };
 const MAX_HISTORY = 20;
 const STORAGE_KEY = 'localCodeAssistant.state';
@@ -105,7 +105,7 @@ function persistState() {
       prompt: '',
       contexts: [],
       includeHistory: formState.includeHistory ?? false,
-      showHistory: false
+      showHistory: true
     },
     history: responseHistory
   };
@@ -122,7 +122,7 @@ function loadState() {
       prompt: '',
       contexts: [],
       includeHistory: data.form?.includeHistory ?? false,
-      showHistory: false
+      showHistory: true
     };
     responseHistory.splice(0, responseHistory.length, ...data.history.slice(-MAX_HISTORY));
   }
@@ -706,7 +706,20 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         };
       }
 
-      var state = vscode.getState() || { ...readFormState(), showHistory: false };
+      var state = (() => {
+        const saved = vscode.getState();
+        if (saved) {
+          const cleared = {
+            ...saved,
+            prompt: '',
+            contexts: [],
+            showHistory: saved.showHistory ?? true
+          };
+          vscode.setState(cleared);
+          return cleared;
+        }
+        return { ...readFormState(), showHistory: true };
+      })();
 
       function applyStateToForm() {
         if (promptEl && 'value' in promptEl) promptEl.value = state.prompt || '';
@@ -862,8 +875,8 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           const current = readFormState();
           vscode.postMessage({
             command: 'runQuery',
-            data: {
-              prompt: current.prompt,
+          data: {
+            prompt: current.prompt,
             contexts: current.contexts,
             backend: current.backend,
             model: current.model,
@@ -872,7 +885,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
             includeHistory: includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false
           }
         });
-          clearInputs();
+        // Do not clear inputs or hide history on submit; keep chat visible
         });
       }
 
