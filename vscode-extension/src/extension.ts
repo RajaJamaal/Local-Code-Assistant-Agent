@@ -66,7 +66,7 @@ let formState: FormState = {
   temperature: 0.1,
   mode: 'assistant',
   includeHistory: false,
-  showHistory: false
+  showHistory: true
 };
 const MAX_HISTORY = 20;
 const STORAGE_KEY = 'localCodeAssistant.state';
@@ -99,13 +99,18 @@ function getConfig() {
 
 function persistState() {
   if (!extContext) return;
+  console.log('[local-code-assistant][persistState]', {
+    showHistory: formState.showHistory,
+    includeHistory: formState.includeHistory,
+    contextsCount: formState.contexts.length
+  });
   const payload: PersistedState = {
     form: {
       ...formState,
       prompt: '',
       contexts: [],
       includeHistory: formState.includeHistory ?? false,
-      showHistory: false
+      showHistory: formState.showHistory ?? true
     },
     history: responseHistory
   };
@@ -116,15 +121,22 @@ function loadState() {
   if (!extContext) return;
   const data = extContext.globalState.get<PersistedState>(STORAGE_KEY);
   if (data) {
+    console.log('[local-code-assistant][loadState] found persisted state', {
+      showHistory: data.form?.showHistory,
+      includeHistory: data.form?.includeHistory,
+      historyCount: data.history?.length
+    });
     formState = {
       ...formState,
       ...data.form,
       prompt: '',
       contexts: [],
       includeHistory: data.form?.includeHistory ?? false,
-      showHistory: false
+      showHistory: data.form?.showHistory ?? true
     };
     responseHistory.splice(0, responseHistory.length, ...data.history.slice(-MAX_HISTORY));
+  } else {
+    console.log('[local-code-assistant][loadState] no persisted state, using defaults');
   }
 }
 
@@ -318,6 +330,7 @@ export function activate(context: vscode.ExtensionContext) {
   loadState();
   const outputChannel = vscode.window.createOutputChannel('Local Code Assistant');
   outputChannel.appendLine('[local-code-assistant] Extension activated');
+  console.log('[local-code-assistant][activate] initial formState', formState);
 
   const baseConfig = getConfig();
   formState.backend = formState.backend || baseConfig.backend;
@@ -460,6 +473,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     this.postState();
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
+      console.log('[local-code-assistant][webviewMessage]', message.command);
       if (message.command === 'runQuery') {
         this.submitHandler(message.data as FormMessage);
         return;
@@ -504,6 +518,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   private async postState() {
     if (!this.view) return;
     const files = await this.getWorkspaceFiles();
+    console.log('[local-code-assistant][postState] sending hydrate', { showHistory: formState.showHistory, includeHistory: formState.includeHistory, historyCount: responseHistory.length });
     this.view.webview.postMessage({
       command: 'hydrate',
       formState,
@@ -671,6 +686,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   <script>
     (function () {
       const vscode = acquireVsCodeApi();
+      console.log('[local-code-assistant/webview] loaded');
 
       const form = document.getElementById('assistant-form');
       const promptEl = document.getElementById('prompt');
@@ -699,16 +715,30 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           contexts: contexts,
           backend: backendEl && 'value' in backendEl ? backendEl.value : 'langgraph',
           model: modelEl && 'value' in modelEl ? modelEl.value : '',
-          temperature: tempSlider && 'value' in tempSlider ? Number(tempSlider.value) : 0.1,
-          mode: modeEl && 'value' in modeEl ? modeEl.value : 'assistant',
-          includeHistory: includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false,
-          showHistory: (state && state.showHistory) || false
-        };
-      }
+      temperature: tempSlider && 'value' in tempSlider ? Number(tempSlider.value) : 0.1,
+      mode: modeEl && 'value' in modeEl ? modeEl.value : 'assistant',
+      includeHistory: includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false,
+      showHistory: true
+    };
+  }
 
-      var state = vscode.getState() || { ...readFormState(), showHistory: false };
+      var state = (() => {
+        const saved = vscode.getState();
+        if (saved) {
+          const cleared = {
+            ...saved,
+            prompt: '',
+            contexts: [],
+            showHistory: saved.showHistory ?? true
+          };
+          vscode.setState(cleared);
+          return cleared;
+        }
+        return { ...readFormState(), prompt: '', contexts: [], showHistory: true };
+      })();
 
       function applyStateToForm() {
+        console.log('[local-code-assistant/webview] applyStateToForm', state);
         if (promptEl && 'value' in promptEl) promptEl.value = state.prompt || '';
         const ctxs = Array.isArray(state.contexts)
           ? state.contexts
@@ -734,6 +764,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         const next = readFormState();
         state = { ...state, ...next };
         vscode.setState(state);
+        console.log('[local-code-assistant/webview] saveStateFromForm', state);
         if (tempLabel) {
           var t = typeof state.temperature === 'number' ? state.temperature : 0.1;
           tempLabel.textContent = t.toFixed(2);
@@ -741,10 +772,11 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       }
 
       function renderHistoryVisibility() {
-        if (responsesEl) responsesEl.style.display = state.showHistory ? 'block' : 'none';
-        if (historyPlaceholder) historyPlaceholder.style.display = state.showHistory ? 'none' : 'block';
+        const show = state.showHistory;
+        if (responsesEl) responsesEl.style.display = show ? 'block' : 'none';
+        if (historyPlaceholder) historyPlaceholder.style.display = show ? 'none' : 'block';
         if (toggleHistoryBtn && 'textContent' in toggleHistoryBtn) {
-          toggleHistoryBtn.textContent = state.showHistory ? 'Hide History' : 'Show History';
+          toggleHistoryBtn.textContent = show ? 'Hide History' : 'Show History';
         }
       }
 
@@ -754,13 +786,13 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         state.prompt = '';
         state.contexts = [];
         state.includeHistory = includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false;
-        state.showHistory = false;
         vscode.setState(state);
       }
 
       if (newChatBtn && 'addEventListener' in newChatBtn) {
         newChatBtn.addEventListener('click', function () {
           clearInputs();
+          state.showHistory = true;
           vscode.postMessage({ command: 'newChat' });
           renderHistoryVisibility();
         });
@@ -823,6 +855,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       if (contextEl && 'addEventListener' in contextEl) {
         contextEl.addEventListener('input', function () {
           saveStateFromForm();
+          console.log('[local-code-assistant/webview] context input');
           renderSuggestions(getFilterToken());
         });
         contextEl.addEventListener('focus', function () {
@@ -838,17 +871,27 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         backendEl.addEventListener('change', saveStateFromForm);
       }
       if (modelEl && 'addEventListener' in modelEl) {
-        modelEl.addEventListener('input', saveStateFromForm);
+        modelEl.addEventListener('input', function () {
+          saveStateFromForm();
+          console.log('[local-code-assistant/webview] model input');
+        });
       }
       if (modeEl && 'addEventListener' in modeEl) {
-        modeEl.addEventListener('change', saveStateFromForm);
+        modeEl.addEventListener('change', function () {
+          saveStateFromForm();
+          console.log('[local-code-assistant/webview] mode change');
+        });
       }
       if (includeHistoryEl && 'addEventListener' in includeHistoryEl) {
-        includeHistoryEl.addEventListener('change', saveStateFromForm);
+        includeHistoryEl.addEventListener('change', function () {
+          saveStateFromForm();
+          console.log('[local-code-assistant/webview] includeHistory change');
+        });
       }
       if (toggleHistoryBtn && 'addEventListener' in toggleHistoryBtn) {
         toggleHistoryBtn.addEventListener('click', function () {
           state.showHistory = !state.showHistory;
+          console.log('[local-code-assistant/webview] toggleHistory', state.showHistory);
           vscode.setState(state);
           renderHistoryVisibility();
         });
@@ -860,10 +903,12 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           saveStateFromForm();
 
           const current = readFormState();
+          // Ensure history stays visible after submit
+          console.log('[local-code-assistant/webview] submit', current);
           vscode.postMessage({
             command: 'runQuery',
-            data: {
-              prompt: current.prompt,
+          data: {
+            prompt: current.prompt,
             contexts: current.contexts,
             backend: current.backend,
             model: current.model,
@@ -872,7 +917,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
             includeHistory: includeHistoryEl && 'checked' in includeHistoryEl ? includeHistoryEl.checked : false
           }
         });
-          clearInputs();
+        // Do not clear inputs or hide history on submit; keep chat visible
         });
       }
 
